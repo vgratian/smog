@@ -1,0 +1,765 @@
+#!/bin/bash
+
+NAME=$(basename $0)
+VERSION='0.0'
+
+version() {
+    echo "${NAME} v${VERSION}"
+}
+
+usage() {
+    echo "
+Usage: ${NAME} COMMAND [ARG] [OPTION...]
+
+Commands:
+    add <URL>     Clone and create new package from URL (expectedly
+                  pointing to a git-repository). See more in 'Modes'.
+    remove <PKG>  Remove PKG and all of its files.
+    show <PKG>    Show metadata of PKG.
+    reflect <PKG> Scan for executables in repository and create
+                  symlinks.
+    update <PKG>  Update package PKG, see 'Modes' for details.
+
+    sync [<PKG>]  Sync package PKG (or all packages with no argument),
+                  i.e. check for available updates.
+
+    list          List packages.
+
+Options:
+    options for 'add':
+        -d        Dry-run, don't download or create files
+        -t        Add package in tag-mode
+        -b        Add package in branch-mode
+
+    options for 'update':
+        -f        Don't stop on uncommitted changes and don't ask to
+                  select tag if more than one tag are available.
+
+    options for 'reflect':
+        -r <DIR>  Use subdirectory DIR instead of root directory
+        -R        Scan directories recursively, not just root directory
+
+Modes:
+    Packages are added and updated in one of the two modes:
+
+    tag-mode      Local repository is cloned using a tag reference.
+                  In this mode, when you update a package, we search
+                  for a tag that is more recent than the current one,
+                  and merge the local working branch.
+
+    branch-mode   Local repository is cloned using a branch reference
+                  (often master/main). Package is updated by merging
+                  last commits into the local working branch.
+
+    The \"local working branch\" is created when a repository is cloned,
+    (useful if you like to mess with the source code). The name of this
+    branch is defined in the config file.
+    "
+}
+
+# add config and libs
+. "config.sh" || { echo "missing [config.sh]"; exit 1; }
+
+# terminal colors
+BOLD="\033[1m"
+CLEAR="\033[0m"
+RED="\033[31m"
+PINK="\033[35m"
+YELLOW="\033[93m"
+CYAN="\033[36m"
+GREY="\033[90m"
+
+
+# exit program with optional error message
+abort() {
+    [ -n "$1" ] && echo "$1" >&2
+    exit 1
+}
+
+# check if user wants to proceed
+check_proceed() {
+    read -p "${1:-proceed?} [y/N]: "
+    [ "$REPLY" == "y" ] || [ "$REPLY" == "yes" ] || exit
+}
+
+# test if package (metadata file) exist
+md_exists() {
+    test -r "${MD}/$1"
+}
+
+# remove package metadata
+md_remove() {
+    rm -f "${MD}/$1"{'','.bins','.libs'}
+}
+
+# read key-value pairs from metadata file and write to
+# the AA 'md' (expectedly declared by calling function),
+# always assumes metadata file exists
+md_load() {
+    local key val
+    while IFS=': ' read -r key val; do
+        md[$key]="$val"
+    done < "${MD}/$1"
+}
+
+# metadata can optinally contain list of binaries
+# for which we've created symlinks (this can be 
+# done with the 'reflect' command). this list
+# should be stored in two additional files.
+# calling function should declare two AA's:
+# 'bins' and 'libs'.
+md_load_links() {
+    local key val
+    if [ -e "$MD/$1.bins" ]; then
+        while IFS=': ' read -r key val; do
+            bins[$key]="$val"
+        done < "$MD/$1.bins"
+    fi
+
+    if [ -e "$MD/$1/libs" ]; then
+        while IFS=': ' read -r key val; do
+            libs[$key]="$val"
+        done < "$MD/$1.libs"
+    fi
+}
+
+# save package metadata (i.e. key-value pairs
+# of the AA 'md', overwrites file if it exists.
+md_dump() {
+    action="created"
+    md_exists "$1" && md_remove "$1" && action="updated"
+
+    local k f="${MD}/$1"
+    touch "$f" || abort "create '$f'"
+    for k in ${!md[@]}; do echo "$k: ${md[$k]}" >> "$f"; done
+    echo "$action '$f'"
+}
+
+# save the two lists of symlinks in auxiliary 
+# metadata files, calling function should provide
+# the AA's 'bins' and 'libs'
+md_dump_links() {
+
+    local x bf="${MD}/$1.bins" lf="${MD}/$1.libs"
+    rm -f "$bf" "$lf"
+    for x in ${!bins[@]}; do [ -n ${bins[$x]} ] && echo "${bins[$x]}: $x" >> "$bf"; done
+    for x in ${!libs[@]}; do [ -n ${libs[$x]} ] && echo "${libs[$x]}: $x" >> "$lf"; done
+
+}
+
+# parse URL of a git-repository (reference:
+# https://www.git-scm.com/docs/git-clone#_git_urls),
+# currently some valid URL's will not be parsed (e.g. ssh-style).
+# writes to the variables path, pkg and url:
+#   - path: full path, including host
+#   - pkg: last part of path, the respository name
+#   - url: re-constructed URL, in git-friendly style
+# returns 1 on failure
+url_parse() {
+    IFS='# ' read -r scheme host port path \
+        <<< $(echo "$1" | sed -E 's|^([a-z]+://)?([^/:]+)(:[0-9]+)?(/.*)|\1# \2# \3# \4|')
+    [ -n "$host" ] && [ -n "$path" ] || return 1
+
+    IFS='# ' read -r path pkg \
+        <<< $(echo "$path" | sed -E 's|^(.*)?/([^/]+)/?$|\1# \2|')
+    pkg=$(echo "$pkg" | sed -E 's|\.git$||')
+    [ -z "$pkg" ] && return 1
+    [ "${path::1}" == "/" ] && path="${path:1}"
+
+    if [ -z "$path" ]; then
+        url="${scheme:-https://}${host}${port}/${pkg}.git/"
+        path="${host}/${pkg}"
+    else
+        url="${scheme:-https://}${host}${port}/${path}/${pkg}.git/"
+        path="$host/$path/$pkg"
+    fi
+}
+
+# list all packages by reading metadata directory
+list() {
+    local pkg
+    local -A md
+
+    if [ ! ${OPTS[no_header]} ]; then
+        printf "************************* ******************** **************************************************\n"
+        printf "%-25s %-20s %-50s\n" "package" "current head" "url"
+        printf "************************* ******************** **************************************************\n"
+    fi
+
+    for pkg in $(ls "${MD}"); do
+        md=()
+        md_load $pkg
+        printf "%-25s %-20s %-50s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
+    done
+}
+
+# show metadata of package
+show() {
+    local -A md
+    local key
+    md_load "$1"
+
+    if [ ! ${OPTS[no_header]} ]; then
+        printf "**************** ******************************************\n"
+        printf "        package: %b%s%b\n" "$BOLD" "$1" "$CLEAR"
+        printf "**************** ******************************************\n"
+    fi
+
+    for key in ${!md[@]}; do printf "%15s: %s\n" "$key" "${md[$key]}"; done
+
+    local bf="${MD}/$1.bins" lf="${MD}/$1.libs"
+    printf "%15s: " "bins"
+    [ -e "$bf" ] && wc -l "$bf" | cut -d' ' -f1 || echo 0
+    printf "%15s: " "libs"
+    [ -e "$lf" ] && ec -l "$lf" | cut -d' ' -f1 || echo 0
+}
+
+# remove package (i.e. remove its repository and metadata)
+remove() {
+    md_exists $1 || abort "package '$1' does not exist"
+    local -A md
+    md_load $1
+    local path="${md[path]}"
+    [ -n "$path" ] || abort "package '$1': missing path"
+    [ -d "$PKG/$path" ] || abort "package '$1': invalid path '$path'"
+
+    echo "remove repository '$PKG/$path'?"
+    echo -e "${BOLD}any local changes will be permanently lost${CLEAR}"
+    
+    check_proceed
+    rm -rf "$PKG/$path" && echo "removed directory '$PKG/$path'"
+
+    local -A bins libs
+    md_load_links $1
+
+    local k
+    for k in ${!bins[@]}; do unlink "$BIN/$k" && echo "removed link '$BIN/$k'"; done
+    for k in ${!libs[@]}; do unlink "$LIB/$k" && echo "removed link '$LIB/$k'"; done
+
+    rm -rvf 
+
+    md_remove $1
+    echo -e "${BOLD}package '$1' removed${CLEAR}"
+}
+
+# create a package, i.e. clone a repo and creating metadata.
+# packages are added in either "tag" mode (preferred) or
+# "branch" mode.
+# arg: url (must be a valid URL to a git repository)
+add() {
+
+    local url pkg path
+    local -A md
+
+    url_parse $1 || abort "failed to parse the URL"
+
+    # TODO check for blanks in url/path
+
+    md[url]=$url
+    md[path]=$path
+
+    echo "********************************************************************"
+    echo -e "    package: $BOLD$pkg$CLEAR"
+    echo "        URL: $url"
+    echo "       path: ${PKG}/$path/"
+    echo "********************************************************************"
+    check_proceed
+
+    # check that pkg name is not already used
+    # it's ok to have two git repositories with the same name
+    # but in our metadata each package name should be unique.
+    while md_exists $pkg; do
+        echo "package name already used"
+        echo "you can use an alternative name"
+        read -p "use name: " pkg
+        [ -n "$pkg" ] && path=$(echo "$path" | sed -E s|([^/])+$|"$pkg"|) || abort
+    done
+
+    # if URL is already used for another package
+    # throw a warning
+    local used=$(grep -rlE "^url: ${url}$" "$MD/")
+    if [ -n "$used" ]; then
+        echo "warning: URL already used by package '`basename $used`'"
+        check_proceed
+    fi
+
+    local -A refs
+    local mode ref sha
+
+    # pkg will be added in either 'tag' or 'branch' mode
+    # check for user preference, or try 'tag' first
+    [ ${OPTS[mode]} ] && mode=${OPTS[mode]} || mode="tag"
+
+    if [ $mode == "tag" ]; then
+        echo "checking available tags..."
+        # TODO: error handling when ls-remote fails
+        while read -r sha ref; do
+            [ "${ref: -3}" == "^{}" ] && continue
+            ref=$(echo "$ref" | cut -d/ -f3)
+            refs[$ref]=$sha  # ref will hold the latest tag
+        done <<< $( $GIT ls-remote -t --sort=version:refname "$url" )
+        echo "found ${#refs[@]} tags"
+
+        if [ ${#refs[@]} -eq 0 ]; then
+            # stop if user explicitely asked for tags
+            [ ${OPTS[mode]} ] && abort
+            check_proceed "try branches?"
+            mode="branch"
+        fi
+    fi
+
+    if [ $mode == "branch" ]; then
+        echo "checking available branches..."
+
+        while read -r sha ref; do
+            ref=$(echo "$ref" | cut -d/ -f3)
+            refs[$ref]=$sha
+        done <<< $( $GIT ls-remote -h "$url" )
+
+        echo "found ${#refs[@]} heads"
+        [ ${#refs[@]} -eq 0 ] && abort
+
+        # since branches are not sorted, pick
+        # the branch named "master" or "main"
+        if [ ${refs[master]+_} ]; then
+            ref=master
+        elif [ ${refs[main]+_} ]; then
+            ref=main
+        else
+            ref=
+        fi
+    fi
+
+    # ask to confirm selected tag/branch (if any)
+    if [ -n "$ref" ]; then
+        read -p "use $mode [$ref]? [y/N]: "
+        [ "$REPLY" == "y" ] || [ "$REPLY" == "yes" ] || ref=
+    fi
+
+    # ask to choose tag/branch if nothing is selected
+    if [ -z "$ref" ]; then
+        echo "choose $mode to clone"
+        select ref in "${!refs[@]}"; do break; done
+    fi
+        
+    [ -n "$ref" ] && [ ${refs[$ref]+_} ] || abort
+
+    md[mode]=$mode
+    md[ref]=$ref
+    md[sha]=${refs[$ref]}
+
+    echo -e "${BOLD}selected $mode [$ref] [${refs[$ref]}]${CLEAR}"
+
+    # TODO: at this point, if something goes wrong, we should cleanup
+    # metadata, otherwise we'll have "zombie" packages
+
+    local dir="$PKG/$path"
+    local cwd=`pwd`
+
+    if [ ! ${OPTS[debug]} ]; then
+        echo -en "$GREY"
+        mkdir -p $dir || abort
+        $GIT clone --depth=1 -c advice.detachedHead=false -b $ref $url $dir || abort
+        cd "$dir"
+        $GIT checkout -b "${MASTERBRANCH}" || abort
+        echo -en "$CLEAR"
+        cd "$cwd"
+    fi
+
+    if [ ${OPTS[debug]} ]; then
+        echo ""
+        echo -e "${BOLD}**dry-run: nothing changed, nothing added**${CLEAR}"
+        echo "package '$pkg' metadata would contain:"
+        echo ""
+
+        for key in ${!md[@]}; do
+            printf "%15s: %s\n" $key ${md[$key]}
+        done
+
+        return
+    fi
+  
+    md_dump $pkg
+    echo -e "${BOLD}package '$pkg'added${CLEAR}"
+}
+
+# check for available updates - for all packages, if no args
+# or for a specific package, if package name is provided
+sync() {
+
+    if [ ! ${OPTS[no_header]} ]; then
+        printf "************************* ******************** **************************************************\n"
+        printf "%-25s %-20s %s\n" "package" "current head" "status"
+        printf "************************* ******************** **************************************************\n"
+    fi
+
+    if [ -n "$1" ]; then
+        sync_pkg $1
+    else
+        ls "${MD}" | sed -E 's|\.md$||' | xargs -P ${NTHREADS} -I {} $0 sync {} -n
+        wait
+        echo ""
+        echo "syncing complete!"
+    fi
+}
+
+sync_pkg() {
+
+    local -A md refs
+    local color msg
+
+    # TODO: update last commit hash
+    # cmd: git log pkgdata[ref] -1 --pretty=format:%H
+    md_load $1 || abort "package '$1' does not exist"
+    [ "${md[mode]}" == tag ] && sync_pkg_tag $1 || sync_pkg_branch $1
+    printf "%b%-25s %-20s %-50s%b\n" $color $1 "${md[mode]} '${md[ref]}'" "$msg" $CLEAR
+}
+
+sync_pkg_branch() {
+
+    read -r sha _ <<< $($GIT ls-remote -h "${md[url]}" refs/heads/"${md[ref]}")
+
+    if [ "${#sha}" -ne 40 ]; then
+        color=$RED
+        msg="error: ref '${md[ref]}' not found"
+    elif [ "$sha" == "${md[sha]}" ]; then
+        color=$GREY
+        msg="up-to-date"
+    else
+        color=$BOLD
+        msg="new commits(s)"
+    fi
+}
+
+sync_pkg_tag() {
+
+    local -i num=-1
+    local tag
+
+    while read -r tag; do
+        # seems like a git bug, avoid
+        [ "${tag: -3}" == "^{}" ] && continue
+
+        if [ $num -ge 0 ]; then
+            ((num++))
+            refs[$tag]=
+            ref=$tag
+        elif [ "$tag" == "${md[ref]}" ]; then
+            num=0
+        fi
+    done <<< $( $GIT ls-remote -t --sort=version:refname ${md[url]} | cut -d/ -f3 )
+
+    case $num in
+        -1 ) color=$RED; msg="error: tag '${md[ref]}' not found" ;;
+        0 ) color=$GREY; msg="up-to-date" ;;
+        1 ) color=$BOLD; msg="new tag '$ref'" ;;
+        * ) color=$BOLD; msg="$num new tags, last: '$ref'" ;;
+    esac
+}
+
+# scan for binaries and executables in package repository
+# this command is useful after you've build a package
+# TODO: poorly tested and probably very buggy
+reflect() {
+    local -A md
+    md_exists "$1" || abort "package '$1' does not exist"
+    md_load "$1"
+
+    local dir="${md[path]}"
+    [ ${OPTS[root]} ] && dir+="/${OPTS[root]}"
+    [ "${dir: -1}" == "/" ] && dir="${dir::-1}"
+
+    [ -d "$dir" ] || abort "directory '$dir' does not exist"
+    [ -L "$dir" ] && abort "directory '$dir' is a symlink"
+
+    local -A bins libs
+    echo "scanning directory '$dir'..."
+    scan_dir "$dir"
+    echo "detected ${#bins[@]} executables and ${#libs[@]} libraries"
+    # don't continue if nothing detected
+    [ ${#bins[@]} -eq 0 ] && [ ${#libs[@]} -eq 0 ] && return
+
+    # show lists
+    local key
+    echo ""
+    [ ${#bins[@]} -ne 0 ] && echo "executables:"
+    for key in ${!bins[@]}; do echo " - $key"; done
+
+    [ ${#libs[@]} -ne 0 ] && echo "libraries:"
+    for key in ${!libs[@]}; do echo " - $key"; done
+
+    read -n 1 -p "create and update links? [y/N]: "
+    echo ""
+    [ "$REPLY" == "y" ] || return
+
+    read -n 1 -p "use all executables or edit the list? [a/e]: "
+    echo ""
+    [ "$REPLY" != "e" ] && [ "$REPLY" != "a" ] && return
+    [ "$REPLY" == "e" ] && edit_list
+    [ $? -ne 0 ] && abort
+
+    local target
+    local -i n=${#dir}
+    local -i removed=0 kept=0 added=0 libs_added=0
+
+    echo "updating linkes ..."
+
+    # update links to executables
+    for key in $(ls $BINS); do
+        target=$(readlink $BINS/$key)
+        [ ${target::$n} != $dir ] && continue
+
+        if [ ${bins[$target]+_} ]; then
+            printf " %-20s %20s -> %s\n" "keep link" $key $target
+            bins[$target]="$key"
+            ((kept++))
+        else
+            printf " %-20s %20s -> %s\n" "remove dead link" $key $target
+            unlink "$BINS/$key"
+            ((removed++))
+        fi
+    done
+
+    for target in ${!bins[@]}; do
+        [ -n "${bins[$target]}" ] && continue
+        key=$(basename $target)
+
+        if [ -e "$BINS/$key" ]; then
+            printf " %-20s %20s -> %s\n" "skip - name used" $key $target
+        else
+            printf " %-20s %20s -> %s\n" "create link" $key $target
+            ln -s "$target" "$BINS/$key"
+            bins[$target]="$key"
+            ((added++))
+        fi
+    done
+
+    # update links to shared libs
+    # TODO: move to a function (almost exact same two loops)
+    for key in $(ls $LIBS); do
+        target=$(readlink $LIBS/$key)
+        [ ${target::$n} != $dir ] && continue
+
+        if [ ${libs[$target]+_} ]; then
+            printf " %-20s %20s -> %s\n" "keep link" $key $target
+            libs[$target]="$key"
+            ((kept++))
+        else
+            printf " %-20s %20s -> %s\n" "remove dead link" $key $target
+            unlink "$BINS/$key"
+            ((removed++))
+        fi
+    done
+
+    for target in ${!libs[@]}; do
+        [ -n "${libs[$target]}" ] && continue
+        key=$(basename $target)
+
+        if [ -e "$LIBS/$key" ]; then
+            printf " %-20s %20s -> %s\n" "skip - name used" $key $target
+        else
+            printf " %-20s %20s -> %s\n" "create link" $key $target
+            ln -s "$target" "$LIBS/$key"
+            libs[$target]="$key"
+            ((added++))
+            ((libs_added++))
+        fi
+    done
+    
+    # report results
+    echo "created $added, kept $kept, removed $removed links"
+    [ $libs_added -ne 0 ] && echo "run 'sudo ldconfig' to update cache"
+
+    # save metadata
+    md_dump_links
+    echo "updated metadata of package '$1'"
+}
+
+# scan for executables in directory (arg).
+# the full path of executables is added either
+# to the AA 'bins' (if it's a binary or shell script) or
+# the AA 'libs' (if it's a shared library).
+#
+# if the 'recursive' option is set, runs recursively
+# in subdirectories.
+reflect_dir() {
+    local f p t
+    for f in $(ls $1); do
+        p="$1/$f"
+        [ -L "$p" ] && continue
+        [ -d "$p" ] && [ ${OPTS[recursive]} ] && reflect_dir "$p" && continue
+        [ -x "$p" ] || continue
+
+        t=$(file -b --mime-type "$p" | sed -E 's|.*-([a-z]+)$|\1|')
+        case "$t" in
+            shellscript | executable ) bins[$p]='' ;;
+            sharedlib )   libs[$p]='' ;;
+        esac
+    done
+}
+
+edit_lists() {
+    echo "'${FUNCNAME[0]}' not implemented yet"
+    return
+
+    # wip
+    local f
+    echo -e ":$PINK"
+    for f in "${bins[@]}"; do echo " - $f"; done;
+    echo -e "$CLEAR"
+
+    echo ""
+    echo "you can choose to use all, none or edit the list"
+    read -p "[a]ll, [e]edit, [N]othing: "
+
+    if [ "${REPLY::1}" == "a" ]; then
+        ${md[bins]}=bins
+    elif [ "${REPLY::1}" == "e" ]; then
+        local tmpf="_tmp_smog_$1_bins.txt"
+        local ok
+        echo ${bins[@]} | tr ' ' '\n' > $tmpf
+        $EDITOR $tmpf
+        unset bins
+        readarray -t bins <<< $(cat $tmpf)
+        rm $tmpf
+        ${md[bins]}=bins
+    else
+        echo "stopping"
+        return
+    fi
+}
+
+# updates a package repository:
+# - in branch mode: just update to the latest commits
+# - in tag mode: fetch and switch to the newer tag
+# if the 'force' option is set, will try to merge any
+# local changes before merging.
+update() {
+
+    local -A md
+    md_load ${1:?missing pkg} || abort "no such package '$1'"
+
+    local color msg ref sha
+    local -A refs
+
+    echo "checking for updates..."
+
+    if [ "${md[mode]}" == branch ]; then
+        sync_pkg_branch $1
+        ref="${md[ref]}"
+    elif [ "${md[mode]}" == tag ]; then
+        sync_pkg_tag $1
+    else
+        abort "invalid mode '${md[mode]}'"
+    fi
+
+    # little hack, since we try to reuse the sync_* functions
+    case "$color" in
+        "$GREY" ) echo "package is up-to-date"; return ;;
+        "$BOLD" ) ;;
+        * ) abort $msg ;;
+    esac
+
+    echo "[$msg]"
+
+    if [ "${md[mode]}" == tag ]; then
+        if [ ${#refs} -eq 1 ]; then
+            echo "new tag '$ref' available"
+        else
+            echo "${#refs} tags available, last: '$ref'"
+            # if the 'force' option is set, just use
+            # 'ref' which is likely the tag we want
+            if [ ! ${OPTS[force]} ]; then
+                read -n 1 -p "update to [$ref]? [y/N]: "
+                [ "$REPLY" == "y" ] || ref=
+
+                [ -z "$ref" ] && select ref in ${!refs[@]}; do break; done
+            fi
+        fi
+        [ -n "$ref" ] && [ ${refs[$ref]+_} ] || abort
+    else
+        echo "new commit(s) on branch ${md[ref]}"
+    fi
+
+    local cwd=`pwd`
+    cd "${PKG}/${md[path]}"
+    $GIT checkout -q "$MASTERBRANCH" || abort
+
+    # check for local changes
+    echo "checking for local changes on '$MASTERBRANCH'..."
+    if [ -n "$($GIT status -s)" ]; then
+        # unless forced, abort if there are unstaged changes
+        [ ! ${OPTS[force]} ] && abort "you have unstaged or uncommited changes"
+        echo "creating an autocommit..."
+        echo -en "$GREY"
+        $GIT add . || abort
+        $GIT commit -m "autocommit by $NAME" || abort
+        echo -en "$CLEAR"
+    else
+        echo "clean branch"
+    fi
+
+    echo -en "$GREY"
+    if [ "${md[mode]}" == tag ]; then
+        $GIT fetch origin tag "$ref" || abort
+        md[ref]="$ref"
+    else 
+        $GIT fetch origin "$ref" || abort
+        md[sha]="$sha"
+    fi
+
+    $GIT merge -m "automerge by $NAME" "$ref" || abort
+    echo -en "$CLEAR"
+    cd $cwd
+
+    md_dump $1
+
+    if [ "${md[mode]}" == tag ]; then
+        echo -e "${BOLD}updated to tag '$ref'${CLEAR}"
+    else
+        echo -e "${BOLD}updated to branch '$ref' [$sha]${CLEAR}"
+    fi
+}
+
+
+declare CMD ARG
+declare -A OPTS
+
+CMD=$1
+
+case $CMD in
+    add | remove | show | update | reflect )
+        [ -z $2 ] && abort "missing arg"
+        [ "${2:0:1}" == "-" ] && abort "invalid arg"
+        ARG=$2
+        shift 2 ;;
+    sync )
+        [ -n "$2" ] && [ "${2:0:1}" != "-" ] && { ARG=$2; shift 2; } || shift 1 ;;
+    list | opts )
+        shift 1 ;;
+    help | -h | --help )
+        usage
+        exit 0 ;;
+    version )
+        version
+        exit 0 ;;
+    * )
+        [ -z $CMD ] && abort "missing command"
+        abort "invalid command '$CMD'" ;;
+esac
+
+while getopts 'vdtbnRr:f' opt; do
+    case $opt in
+        v ) OPTS[verbose]=true ;;
+        d ) OPTS[debug]=true ;;
+        t ) OPTS[mode]=tag ;;
+        b ) OPTS[mode]=branch ;;
+        n ) OPTS[no_header]=true ;;
+        R ) OPTS[recursive]=true ;;
+        r ) OPTS[root]="$OPTARG" ;;
+        f ) OPTS[force]=true ;;
+        ? ) abort ;;
+    esac
+done
+
+$CMD $ARG
