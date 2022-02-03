@@ -236,8 +236,6 @@ remove() {
     for k in ${!bins[@]}; do unlink "$BIN/$k" && echo "removed link '$BIN/$k'"; done
     for k in ${!libs[@]}; do unlink "$LIB/$k" && echo "removed link '$LIB/$k'"; done
 
-    rm -rvf 
-
     md_remove $1
     echo -e "${BOLD}package '$1' removed${CLEAR}"
 }
