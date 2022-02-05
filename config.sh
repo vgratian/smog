@@ -3,7 +3,7 @@
 GIT=$(which git)
 EDITOR=$(which vim)
 
-MD="$HOME/smog/md"
+MD="$HOME_DIR/md"
 PKG="$HOME/pkg"
 BIN="$HOME/bin"
 LIB="$HOME/lib"

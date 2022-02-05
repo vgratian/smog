@@ -27,17 +27,19 @@ Commands:
 
 Options:
     options for 'add':
-        -d        Dry-run, don't download or create files
         -t        Add package in tag-mode
         -b        Add package in branch-mode
 
-    options for 'update':
-        -f        Don't stop on uncommitted changes and don't ask to
-                  select tag if more than one tag are available.
+    options for 'add' and 'reflect':
+        -d        Dry-run, don't download or create files
 
     options for 'reflect':
         -r <DIR>  Use subdirectory DIR instead of root directory
         -R        Scan directories recursively, not just root directory
+
+    options for 'update':
+        -f        Don't stop on uncommitted changes and don't ask to
+                  select tag if more than one tag are available.
 
 Modes:
     Packages are added and updated in one of the two modes:
@@ -57,8 +59,13 @@ Modes:
     "
 }
 
-# add config and libs
-. "config.sh" || { echo "missing [config.sh]"; exit 1; }
+# figure out home directory
+declare HOME_DIR
+[ -L "$0" ] && HOME_DIR=$(dirname $(readlink $0)) || HOME_DIR=$(dirname $0)
+
+# source config
+declare CONFIG_F="config.sh"
+. "$HOME_DIR/$CONFIG_F" || { echo "[$CONFIG_F] not found"; exit 1; }
 
 # terminal colors
 BOLD="\033[1m"
@@ -211,7 +218,7 @@ show() {
     printf "%15s: " "bins"
     [ -e "$bf" ] && wc -l "$bf" | cut -d' ' -f1 || echo 0
     printf "%15s: " "libs"
-    [ -e "$lf" ] && ec -l "$lf" | cut -d' ' -f1 || echo 0
+    [ -e "$lf" ] && wc -l "$lf" | cut -d' ' -f1 || echo 0
 }
 
 # remove package (i.e. remove its repository and metadata)
@@ -378,7 +385,7 @@ add() {
     fi
   
     md_dump $pkg
-    echo -e "${BOLD}package '$pkg'added${CLEAR}"
+    echo -e "${BOLD}package '$pkg' added${CLEAR}"
 }
 
 # check for available updates - for all packages, if no args
@@ -464,15 +471,25 @@ reflect() {
     md_load "$1"
 
     local dir="${md[path]}"
-    [ ${OPTS[root]} ] && dir+="/${OPTS[root]}"
-    [ "${dir: -1}" == "/" ] && dir="${dir::-1}"
+    # if a build directory is specified, only scan that
+    if [ ${OPTS[root]} ]; then
+        [ "${OPTS[root]: -1}" == "/" ] && OPTS[root]="${OPTS[root]::-1}"
+        dir+="/${OPTS[root]}"
+        if [ ! ${md[builddir]+_} ] || [ "${md[builddir]}" != "${OPTS[root]}" ]; then
+            md[builddir]="${OPTS[root]}"
+            [ ! ${OPTS[debug]} ] && md_dump "$1"
+        fi
+    elif [ ${md[builddir]+_} ]; then
+        dir+="/${md[builddir]}"
+    fi
+    dir="$PKG/$dir"
 
     [ -d "$dir" ] || abort "directory '$dir' does not exist"
     [ -L "$dir" ] && abort "directory '$dir' is a symlink"
 
     local -A bins libs
     echo "scanning directory '$dir'..."
-    scan_dir "$dir"
+    reflect_dir "$dir"
     echo "detected ${#bins[@]} executables and ${#libs[@]} libraries"
     # don't continue if nothing detected
     [ ${#bins[@]} -eq 0 ] && [ ${#libs[@]} -eq 0 ] && return
@@ -492,9 +509,11 @@ reflect() {
 
     read -n 1 -p "use all executables or edit the list? [a/e]: "
     echo ""
-    [ "$REPLY" != "e" ] && [ "$REPLY" != "a" ] && return
-    [ "$REPLY" == "e" ] && edit_list
-    [ $? -ne 0 ] && abort
+    if [ "$REPLY" == "e" ]; then
+        edit_list || abort
+    elif [ "$REPLY" != "a" ]; then
+        return
+    fi
 
     local target
     local -i n=${#dir}
@@ -502,9 +521,14 @@ reflect() {
 
     echo "updating linkes ..."
 
+    # the two directories for symlinks should exist
+    [ -d "$BIN" ] || abort "directory [$BIN] does not exist"
+    [ -d "$LIB" ] || abort "directory [$LIB] does not exist"
+
     # update links to executables
-    for key in $(ls $BINS); do
-        target=$(readlink $BINS/$key)
+    for key in $(ls $BIN); do
+        target=$(readlink $BIN/$key)
+        [ -z "$target" ] && continue
         [ ${target::$n} != $dir ] && continue
 
         if [ ${bins[$target]+_} ]; then
@@ -513,7 +537,7 @@ reflect() {
             ((kept++))
         else
             printf " %-20s %20s -> %s\n" "remove dead link" $key $target
-            unlink "$BINS/$key"
+            [ ! ${OPTS[debug]} ] && unlink "$BIN/$key"
             ((removed++))
         fi
     done
@@ -522,11 +546,11 @@ reflect() {
         [ -n "${bins[$target]}" ] && continue
         key=$(basename $target)
 
-        if [ -e "$BINS/$key" ]; then
+        if [ -e "$BIN/$key" ]; then
             printf " %-20s %20s -> %s\n" "skip - name used" $key $target
         else
             printf " %-20s %20s -> %s\n" "create link" $key $target
-            ln -s "$target" "$BINS/$key"
+            [ ! ${OPTS[debug]} ] && ln -s "$target" "$BIN/$key"
             bins[$target]="$key"
             ((added++))
         fi
@@ -534,17 +558,18 @@ reflect() {
 
     # update links to shared libs
     # TODO: move to a function (almost exact same two loops)
-    for key in $(ls $LIBS); do
-        target=$(readlink $LIBS/$key)
+    for key in $(ls $LIB); do
+        target=$(readlink $LIB/$key)
+        [ -z "$target" ] && continue
         [ ${target::$n} != $dir ] && continue
 
         if [ ${libs[$target]+_} ]; then
             printf " %-20s %20s -> %s\n" "keep link" $key $target
-            libs[$target]="$key"
+            [ ! ${OPTS[debug]} ] && libs[$target]="$key"
             ((kept++))
         else
             printf " %-20s %20s -> %s\n" "remove dead link" $key $target
-            unlink "$BINS/$key"
+            [ ! ${OPTS[debug]} ] && unlink "$LIB/$key"
             ((removed++))
         fi
     done
@@ -553,11 +578,11 @@ reflect() {
         [ -n "${libs[$target]}" ] && continue
         key=$(basename $target)
 
-        if [ -e "$LIBS/$key" ]; then
+        if [ -e "$LIB/$key" ]; then
             printf " %-20s %20s -> %s\n" "skip - name used" $key $target
         else
             printf " %-20s %20s -> %s\n" "create link" $key $target
-            ln -s "$target" "$LIBS/$key"
+            [ ! ${OPTS[debug]} ] && ln -s "$target" "$LIB/$key"
             libs[$target]="$key"
             ((added++))
             ((libs_added++))
@@ -569,8 +594,12 @@ reflect() {
     [ $libs_added -ne 0 ] && echo "run 'sudo ldconfig' to update cache"
 
     # save metadata
-    md_dump_links
-    echo "updated metadata of package '$1'"
+    if [ ${OPTS[debug]} ]; then
+        echo "in debug mode: nothing actually changed"
+    elif [ $added -ne 0 ] || [ $removed -ne 0 ]; then
+        md_dump_links "$1"
+        echo "updated metadata of package '$1'"
+    fi
 }
 
 # scan for executables in directory (arg).
