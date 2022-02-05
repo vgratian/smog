@@ -154,6 +154,10 @@ md_dump_links() {
 
 }
 
+md_list() {
+    ls "$MD" | grep -vE "\.(libs)|(bins)$"
+}
+
 # parse URL of a git-repository (reference:
 # https://www.git-scm.com/docs/git-clone#_git_urls),
 # currently some valid URL's will not be parsed (e.g. ssh-style).
@@ -193,7 +197,8 @@ list() {
         printf "************************* ******************** **************************************************\n"
     fi
 
-    for pkg in $(ls "${MD}"); do
+    for pkg in $(md_list); do
+        case "${pkg: -5}" in .bins | .libs ) continue ;; esac
         md=()
         md_load $pkg
         printf "%-25s %-20s %-50s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
@@ -401,7 +406,7 @@ sync() {
     if [ -n "$1" ]; then
         sync_pkg $1
     else
-        ls "${MD}" | sed -E 's|\.md$||' | xargs -P ${NTHREADS} -I {} $0 sync {} -n
+        md_list | xargs -P ${NTHREADS} -I {} $0 sync {} -n
         wait
         echo ""
         echo "syncing complete!"
