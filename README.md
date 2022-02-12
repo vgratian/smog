@@ -11,3 +11,16 @@ rather, it is a meta-package manger, since:
 - it allows to conveniently update packages
 
 currently this utility is not stable and very likely I will move it to anther language.
+
+### Requirements
+
+- `git`
+- `bash` (>= `4.0`)
+- a few common bash commands:
+    * from GNU coreutils: `[`, `cat`, `cut`, `ln`, `readlink`, `tr`, etc.
+    * `getopts`
+    * `sed`
+    * `grep`
+    * `file`
+    * `xargs` (for asynchronous syncing)
+
