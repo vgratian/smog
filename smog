@@ -25,10 +25,15 @@ Commands:
 
     list          List packages.
 
+    set <PKG> KEY[=VAL]
+                  Set metadata value of KEY to VAL (without VAL,
+                  show current value).
+
 Options:
     options for 'add':
         -t        Add package in tag-mode
         -b        Add package in branch-mode
+        -u        Force using URL as is
 
     options for 'add' and 'reflect':
         -d        Dry-run, don't download or create files
@@ -158,6 +163,32 @@ md_list() {
     ls "$MD" | grep -vE "\.(libs)|(bins)$"
 }
 
+set() {
+    local -A md
+
+    md_exists $1 || abort "package '$1' does not exist"
+    md_load $1
+
+    local key val
+    key=$(echo "$2" | cut -d= -f1)
+    val=$(echo "$2" | cut -s -d= -f2)
+
+    if [ -z "$val" ]; then
+        [ ${md[$key]+_} ] && val="${md[$key]}"
+        echo "$key = $val"
+    else
+        echo "$key = $val"
+        if [ ${md[$key]+_} ]; then
+            check_proceed "overwrite existing value [${md[$key]}]?"
+        else
+            check_proceed "write to package metadata?"
+        fi
+
+        md[$key]="$val"
+        md_dump $1
+    fi
+}
+
 # parse URL of a git-repository (reference:
 # https://www.git-scm.com/docs/git-clone#_git_urls),
 # currently some valid URL's will not be parsed (e.g. ssh-style).
@@ -198,7 +229,6 @@ list() {
     fi
 
     for pkg in $(md_list); do
-        case "${pkg: -5}" in .bins | .libs ) continue ;; esac
         md=()
         md_load $pkg
         printf "%-25s %-20s %-50s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
@@ -252,6 +282,37 @@ remove() {
     echo -e "${BOLD}package '$1' removed${CLEAR}"
 }
 
+
+# just check the given URL and show tags (branches)
+# available for download (kind of like 'add' in debug mode)
+check() {
+    local url pkg path
+
+    url_parse $1 || abort "failed to parse the URL"
+    [ ${OPTS[url]} ] && url=$1
+
+    echo "********************************************************************"
+    echo -e "    package: $BOLD$pkg$CLEAR"
+    echo "        URL: $url"
+    echo "********************************************************************"
+
+    local mode flags
+
+    [ ${OPTS[mode]} ] && mode=${OPTS[mode]} || mode=tag
+    [ $mode == "tag" ] && flags="-t" || flags="-h"
+
+    echo "checking avilable ${mode}s [$flags]..."
+
+    local ref sha
+
+    while read -r sha ref; do
+        ref=$(echo "$ref" | cut -d/ -f3)
+        printf "  %-25s %s\n" "$ref" "$sha"
+    done <<< $( $GIT ls-remote $flags "$url" )
+
+    echo ""
+}
+
 # create a package, i.e. clone a repo and creating metadata.
 # packages are added in either "tag" mode (preferred) or
 # "branch" mode.
@@ -264,6 +325,8 @@ add() {
     url_parse $1 || abort "failed to parse the URL"
 
     # TODO check for blanks in url/path
+
+    [ ${OPTS[url]} ] && url=$1
 
     md[url]=$url
     md[path]=$path
@@ -294,7 +357,7 @@ add() {
     fi
 
     local -A refs
-    local mode ref sha
+    local mode ref refname sha
 
     # pkg will be added in either 'tag' or 'branch' mode
     # check for user preference, or try 'tag' first
@@ -303,9 +366,9 @@ add() {
     if [ $mode == "tag" ]; then
         echo "checking available tags..."
         # TODO: error handling when ls-remote fails
-        while read -r sha ref; do
+        while read -r sha refname; do
             [ "${ref: -3}" == "^{}" ] && continue
-            ref=$(echo "$ref" | cut -d/ -f3)
+            ref=$(echo "$refname" | cut -d/ -f3)
             refs[$ref]=$sha  # ref will hold the latest tag
         done <<< $( $GIT ls-remote -t --sort=version:refname "$url" )
         echo "found ${#refs[@]} tags"
@@ -314,6 +377,7 @@ add() {
             # stop if user explicitely asked for tags
             [ ${OPTS[mode]} ] && abort
             check_proceed "try branches?"
+            ref=
             mode="branch"
         fi
     fi
@@ -321,8 +385,8 @@ add() {
     if [ $mode == "branch" ]; then
         echo "checking available branches..."
 
-        while read -r sha ref; do
-            ref=$(echo "$ref" | cut -d/ -f3)
+        while read -r sha refname; do
+            ref=$(echo "$refname" | cut -d/ -f3)
             refs[$ref]=$sha
         done <<< $( $GIT ls-remote -h "$url" )
 
@@ -451,6 +515,10 @@ sync_pkg_tag() {
         [ "${tag: -3}" == "^{}" ] && continue
 
         if [ $num -ge 0 ]; then
+            # optinally only grab tags matching pattern
+            if [ ${md[tag_pattern]+_} ]; then
+                grep -qP "${md[tag_pattern]}" || continue
+            fi
             ((num++))
             refs[$tag]=
             ref=$tag
@@ -754,20 +822,31 @@ update() {
 }
 
 
-declare CMD ARG
+declare CMD ARG1 ARG2
 declare -A OPTS
 
 CMD=$1
 
 case $CMD in
-    add | remove | show | update | reflect )
-        [ -z $2 ] && abort "missing arg"
-        [ "${2:0:1}" == "-" ] && abort "invalid arg"
-        ARG=$2
+    add | check )
+        [ -z $2 ] && abort "missing <URL>"
+        [ "${2:0:1}" == "-" ] && abort "invalid <URL>"
+        ARG1=$2
+        shift 2 ;;
+    set )
+        [ -z $2 ] && abort "missing <PKG>"
+        [ -z $3 ] && abort "missing <KEY>"
+        ARG1=$2
+        ARG2=$3
+        shift 3 ;;
+    remove | show | update | reflect )
+        [ -z $2 ] && abort "missing <PKG>"
+        [ "${2:0:1}" == "-" ] && abort "invalid <PKG>"
+        ARG1=$2
         shift 2 ;;
     sync )
-        [ -n "$2" ] && [ "${2:0:1}" != "-" ] && { ARG=$2; shift 2; } || shift 1 ;;
-    list | opts )
+        [ -n "$2" ] && [ "${2:0:1}" != "-" ] && { ARG1=$2; shift 2; } || shift 1 ;;
+    list )
         shift 1 ;;
     help | -h | --help )
         usage
@@ -780,7 +859,7 @@ case $CMD in
         abort "invalid command '$CMD'" ;;
 esac
 
-while getopts 'vdtbnRr:f' opt; do
+while getopts 'vdtbnRr:fu' opt; do
     case $opt in
         v ) OPTS[verbose]=true ;;
         d ) OPTS[debug]=true ;;
@@ -790,8 +869,9 @@ while getopts 'vdtbnRr:f' opt; do
         R ) OPTS[recursive]=true ;;
         r ) OPTS[root]="$OPTARG" ;;
         f ) OPTS[force]=true ;;
+        u ) OPTS[url]=true ;;
         ? ) abort ;;
     esac
 done
 
-$CMD $ARG
+$CMD $ARG1 $ARG2
