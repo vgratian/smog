@@ -16,6 +16,7 @@ Commands:
                   pointing to a git-repository). See more in 'Modes'.
     remove <PKG>  Remove PKG and all of its files.
     show <PKG>    Show metadata of PKG.
+    path <PKG>    Print absolure path of PKG directory.
     reflect <PKG> Scan for executables in repository and create
                   symlinks.
     update <PKG>  Update package PKG, see 'Modes' for details.
@@ -54,6 +55,9 @@ Modes:
                   for a tag that is more recent than the current one,
                   and merge the local working branch.
 
+                  When the attribute 'tag_pattern' is set, only tags
+                  matching this pattern are considered.
+
     branch-mode   Local repository is cloned using a branch reference
                   (often master/main). Package is updated by merging
                   last commits into the local working branch.
@@ -64,13 +68,6 @@ Modes:
     "
 }
 
-# figure out home directory
-declare HOME_DIR
-[ -L "$0" ] && HOME_DIR=$(dirname $(readlink $0)) || HOME_DIR=$(dirname $0)
-
-# source config
-declare CONFIG_F="config.sh"
-. "$HOME_DIR/$CONFIG_F" || { echo "[$CONFIG_F] not found"; exit 1; }
 
 # terminal colors
 BOLD="\033[1m"
@@ -82,36 +79,39 @@ CYAN="\033[36m"
 GREY="\033[90m"
 
 
-# exit program with optional error message
+# Exit program with optional error message
 abort() {
     [ -n "$1" ] && echo "$1" >&2
     exit 1
 }
 
-# check if user wants to proceed
+# Check if user wants to proceed
 check_proceed() {
     read -p "${1:-proceed?} [y/N]: "
     [ "$REPLY" == "y" ] || [ "$REPLY" == "yes" ] || exit
 }
 
-# test if package (metadata file) exist
+# Test if package metadata file exist
 md_exists() {
-    test -r "${MD}/$1"
+    test -e "$MDD/$1"
 }
 
-# remove package metadata
+# Remove package metadata
 md_remove() {
-    rm -f "${MD}/$1"{'','.bins','.libs'}
+    rm -eaf "$MDD/$1"
 }
 
-# read key-value pairs from metadata file and write to
-# the AA 'md' (expectedly declared by calling function),
-# always assumes metadata file exists
+# Read package metadata and store into the AA 'md' (should
+# be declared by calling function). Metadata consists of
+# simple key-value pairs. As an exception, the 'bins' and
+# 'libs' fields consist from key-values on their own: if
+# calling function also wants those, it should additionally
+# declare the AAs 'bins' and 'libs'.
 md_load() {
     local key val
     while IFS=': ' read -r key val; do
         md[$key]="$val"
-    done < "${MD}/$1"
+    done < "$MDD/$1"
 }
 
 # metadata can optinally contain list of binaries
@@ -122,16 +122,16 @@ md_load() {
 # 'bins' and 'libs'.
 md_load_links() {
     local key val
-    if [ -e "$MD/$1.bins" ]; then
+    if [ -e "$MDD/$1.bins" ]; then
         while IFS=': ' read -r key val; do
             bins[$key]="$val"
-        done < "$MD/$1.bins"
+        done < "$MDD/$1.bins"
     fi
 
-    if [ -e "$MD/$1/libs" ]; then
+    if [ -e "$MDD/$1/libs" ]; then
         while IFS=': ' read -r key val; do
             libs[$key]="$val"
-        done < "$MD/$1.libs"
+        done < "$MDD/$1.libs"
     fi
 }
 
@@ -141,10 +141,10 @@ md_dump() {
     action="created"
     md_exists "$1" && md_remove "$1" && action="updated"
 
-    local k f="${MD}/$1"
-    touch "$f" || abort "create '$f'"
-    for k in ${!md[@]}; do echo "$k: ${md[$k]}" >> "$f"; done
-    echo "$action '$f'"
+    local key fp="${MDD}/$1"
+    touch "$fp" || abort "can't create '$fp'"
+    for key in ${!md[@]}; do echo "$key: ${md[$key]}" >> "$fp"; done
+    echo "$action metadata '$fp'"
 }
 
 # save the two lists of symlinks in auxiliary 
@@ -160,7 +160,7 @@ md_dump_links() {
 }
 
 md_list() {
-    ls "$MD" | grep -vE "\.(libs)|(bins)$"
+    ls "$MDD" | grep -vE "\.(libs)|(bins)$"
 }
 
 set() {
@@ -170,8 +170,7 @@ set() {
     md_load $1
 
     local key val
-    key=$(echo "$2" | cut -d= -f1)
-    val=$(echo "$2" | cut -s -d= -f2)
+    read -r key val <<< $(echo "$2" | sed -E 's|^(\w+)=?(.*)$|\1 \2|')
 
     if [ -z "$val" ]; then
         [ ${md[$key]+_} ] && val="${md[$key]}"
@@ -189,32 +188,12 @@ set() {
     fi
 }
 
-# parse URL of a git-repository (reference:
-# https://www.git-scm.com/docs/git-clone#_git_urls),
-# currently some valid URL's will not be parsed (e.g. ssh-style).
-# writes to the variables path, pkg and url:
-#   - path: full path, including host
-#   - pkg: last part of path, the respository name
-#   - url: re-constructed URL, in git-friendly style
-# returns 1 on failure
-url_parse() {
-    IFS='# ' read -r scheme host port path \
-        <<< $(echo "$1" | sed -E 's|^([a-z]+://)?([^/:]+)(:[0-9]+)?(/.*)|\1# \2# \3# \4|')
-    [ -n "$host" ] && [ -n "$path" ] || return 1
+path() {
+    local -A md
+    md_exists $1 || abort "package '$1' does not exist"
+    md_load $1
 
-    IFS='# ' read -r path pkg \
-        <<< $(echo "$path" | sed -E 's|^(.*)?/([^/]+)/?$|\1# \2|')
-    pkg=$(echo "$pkg" | sed -E 's|\.git$||')
-    [ -z "$pkg" ] && return 1
-    [ "${path::1}" == "/" ] && path="${path:1}"
-
-    if [ -z "$path" ]; then
-        url="${scheme:-https://}${host}${port}/${pkg}.git/"
-        path="${host}/${pkg}"
-    else
-        url="${scheme:-https://}${host}${port}/${path}/${pkg}.git/"
-        path="$host/$path/$pkg"
-    fi
+    echo "$PKG/${md[path]}"
 }
 
 # list all packages by reading metadata directory
@@ -237,6 +216,7 @@ list() {
 
 # show metadata of package
 show() {
+    md_exists $1 || abort "package '$1' does not exist"
     local -A md
     local key
     md_load "$1"
@@ -247,9 +227,9 @@ show() {
         printf "**************** ******************************************\n"
     fi
 
-    for key in ${!md[@]}; do printf "%15s: %s\n" "$key" "${md[$key]}"; done
+    for key in ${!md[@]}; do printf "%15s: " "$key"; echo ${md[$key]}; done
 
-    local bf="${MD}/$1.bins" lf="${MD}/$1.libs"
+    local bf="$MDD/$1.bins" lf="${MD}/$1.libs"
     printf "%15s: " "bins"
     [ -e "$bf" ] && wc -l "$bf" | cut -d' ' -f1 || echo 0
     printf "%15s: " "libs"
@@ -265,31 +245,122 @@ remove() {
     [ -n "$path" ] || abort "package '$1': missing path"
     [ -d "$PKG/$path" ] || abort "package '$1': invalid path '$path'"
 
-    echo "remove repository '$PKG/$path'?"
-    echo -e "${BOLD}any local changes will be permanently lost${CLEAR}"
-    
-    check_proceed
-    rm -rf "$PKG/$path" && echo "removed directory '$PKG/$path'"
+	echo "warning: any local changes will be permanently lost"
+    check_proceed "remove '$1'?"
 
-    local -A bins libs
-    md_load_links $1
+    rm -rf "$PKG/$path" || abort
+	echo "removed directory '$PKG/$path'"
 
-    local k
-    for k in ${!bins[@]}; do unlink "$BIN/$k" && echo "removed link '$BIN/$k'"; done
-    for k in ${!libs[@]}; do unlink "$LIB/$k" && echo "removed link '$LIB/$k'"; done
+	# TODO
+
+    # local -A bins libs
+    # md_load_links $1
+
+    # local k
+    # for k in ${!bins[@]}; do unlink "$BIN/$k" && echo "removed link '$BIN/$k'"; done
+    # for k in ${!libs[@]}; do unlink "$LIB/$k" && echo "removed link '$LIB/$k'"; done
 
     md_remove $1
     echo -e "${BOLD}package '$1' removed${CLEAR}"
 }
 
+# Parse URL of a git-repository (reference:
+# https://www.git-scm.com/docs/git-clone#_git_urls),
+# and write to 'scheme', 'host', 'port', 'path' and 'pkg'.
+url_parse() {
+    # parse http-style url
+    IFS='# ' read -r scheme host port path \
+        <<< $(echo "$1" | sed -E 's|^([a-z]+://)?([^/:]+)(:[0-9]+)?(/.*)|\1# \2# \3# \4|')
 
-# just check the given URL and show tags (branches)
-# available for download (kind of like 'add' in debug mode)
+    # parse ssh-style url
+    if [ -z "$host" ] || [ -z "$path" ]; then
+        IFS='# ' read -r scheme host path \
+            <<< $(echo "$1" | sed -E 's|^([a-z]+@)([^/:]+):(.+)|\1# \2# \3#|')
+    fi
+
+    [ -n "$host" ] && [ -n "$path" ] || return 1
+
+    # extract repo/package name from 'path'
+    IFS='# ' read -r path pkg \
+        <<< $(echo "$path" | sed -E 's|^(.*)?/([^/]+)/?$|\1# \2|')
+    pkg=$(echo "$pkg" | sed -E 's|\.git$||')
+
+    [ -z "$pkg" ] && return 1
+
+    # cleanup redundant parts
+    [ "${path::1}" == "/" ] && path="${path:1}"
+    [ "${host::4}" == "git." ] && host="${host:4}"
+
+    # reconstruct path that smog should use for local directory path
+    [ -n "$path" ] && path="$host/$path/$pkg" || path="$host/$pkg"
+}
+
+
+check_remote_refs() {
+    local target data flags plural
+    [ -z ${OPTS[$mode]} ] && target=available || target=matching
+
+    if [ $mode == tag ]; then
+        flags="-t --sort=version:refname $url ${OPTS[tag]-}"
+        plural=tags
+    else
+        flags="-h $url ${OPTS[branch]-}"
+        plural=branches
+    fi
+
+    echo "checking $target $plural..."
+
+	data=$( $GIT ls-remote $flags )
+    test $? || abort
+
+    while read -r sha refname; do
+        [ "${refname: -3}" == ^{} ] && continue  # TODO not sure what to do with those
+        ref=$(echo "$refname" | cut -s -d/ -f3)
+        # make sure 'ref' holds last one
+        [ -n "$ref" ] && refs[$ref]=$sha && refsarr+=($ref)
+    done <<< $data
+
+    echo "found ${#refs[@]} $plural"
+}
+
+
+check_refs() {
+    # pkg will be added either in 'tag' or 'branch' mode
+    # check for user preference, if none try 'tag' first
+    mode=${OPTS[mode]-tag}
+    [ ${OPTS[branch]} ] && mode=branch
+
+    if [ $mode == tag ]; then
+        check_remote_refs
+
+        if [ ${#refs[@]} -eq 0 ]; then
+            # abort if user asked for tags
+            [ ${OPTS[mode]} ] || [ ${OPTS[tag]} ] && abort
+			check_proceed "try branches?"
+			ref=
+			mode="branch"
+        fi
+
+    fi
+
+    if [ $mode == branch ]; then
+        check_remote_refs
+
+        [ ${#refs[@]} -eq 0 ] && abort
+
+        # mark 'master' or 'main' as preferred branch
+        ref=
+        [ ${refs[main]} ] && ref=main
+        [ ${refs[master]} ] && ref=master
+    fi
+}
+
+
+# Check if URL is valid and show available refs (tags or branches).
 check() {
     local url pkg path
 
     url_parse $1 || abort "failed to parse the URL"
-    [ ${OPTS[url]} ] && url=$1
 
     echo "********************************************************************"
     echo -e "    package: $BOLD$pkg$CLEAR"
@@ -313,99 +384,67 @@ check() {
     echo ""
 }
 
-# create a package, i.e. clone a repo and creating metadata.
-# packages are added in either "tag" mode (preferred) or
-# "branch" mode.
-# arg: url (must be a valid URL to a git repository)
+# Add a repository, i.e. check for available refs (tags or branches),
+# clone the repository and create a metadata file.
 add() {
 
-    local url pkg path
+	opts_show
+
+    local pkg path url="$1"
     local -A md
 
-    url_parse $1 || abort "failed to parse the URL"
+    url_parse "$url" || abort "failed to parse the URL"
+
+    echo
+    echo "    package: $pkg"
+    echo "        URL: $url"
+    echo "       path: $PKG/$path/"
+	echo
+
+    check_proceed
 
     # TODO check for blanks in url/path
-
-    [ ${OPTS[url]} ] && url=$1
-
     md[url]=$url
     md[path]=$path
 
-    echo "********************************************************************"
-    echo -e "    package: $BOLD$pkg$CLEAR"
-    echo "        URL: $url"
-    echo "       path: ${PKG}/$path/"
-    echo "********************************************************************"
-    check_proceed
-
-    # check that pkg name is not already used
-    # it's ok to have two git repositories with the same name
-    # but in our metadata each package name should be unique.
-    while md_exists $pkg; do
-        echo "package name already used"
-        echo "you can use an alternative name"
-        read -p "use name: " pkg
-        [ -n "$pkg" ] && path=$(echo "$path" | sed -E s|([^/])+$|"$pkg"|) || abort
-    done
-
     # if URL is already used for another package
     # throw a warning
-    local used=$(grep -rlE "^url: ${url}$" "$MD/")
+    local used=$(grep -rlE "^url: ${url}$" "$MDD/")
     if [ -n "$used" ]; then
         echo "warning: URL already used by package '`basename $used`'"
         check_proceed
     fi
 
+    # check that pkg name is not already used
+    # it's ok to have two git repositories with the same name
+    # but in our metadata each package name should be unique.
+	decho "check pkg"
+    while md_exists "$pkg"; do
+        echo "package name already used"
+        echo "you can use an alternative name"
+        read -p "use name: " pkg
+		[ -n "$pkg" ] || abort
+		# update path with new name
+        path=$(echo "$path" | sed -E s|([^/])+$|"$pkg"|)
+    done
+
+	decho "ok"
+
+	# check available tags/branches and which
+	# ref we will use to clone the repo
+
     local -A refs
+	local -a refsarr
     local mode ref refname sha
 
-    # pkg will be added in either 'tag' or 'branch' mode
-    # check for user preference, or try 'tag' first
-    [ ${OPTS[mode]} ] && mode=${OPTS[mode]} || mode="tag"
+	check_refs
 
-    if [ $mode == "tag" ]; then
-        echo "checking available tags..."
-        # TODO: error handling when ls-remote fails
-        while read -r sha refname; do
-            [ "${ref: -3}" == "^{}" ] && continue
-            ref=$(echo "$refname" | cut -d/ -f3)
-            refs[$ref]=$sha  # ref will hold the latest tag
-        done <<< $( $GIT ls-remote -t --sort=version:refname "$url" )
-        echo "found ${#refs[@]} tags"
-
-        if [ ${#refs[@]} -eq 0 ]; then
-            # stop if user explicitely asked for tags
-            [ ${OPTS[mode]} ] && abort
-            check_proceed "try branches?"
-            ref=
-            mode="branch"
-        fi
-    fi
-
-    if [ $mode == "branch" ]; then
-        echo "checking available branches..."
-
-        while read -r sha refname; do
-            ref=$(echo "$refname" | cut -d/ -f3)
-            refs[$ref]=$sha
-        done <<< $( $GIT ls-remote -h "$url" )
-
-        echo "found ${#refs[@]} heads"
-        [ ${#refs[@]} -eq 0 ] && abort
-
-        # since branches are not sorted, pick
-        # the branch named "master" or "main"
-        if [ ${refs[master]+_} ]; then
-            ref=master
-        elif [ ${refs[main]+_} ]; then
-            ref=main
-        else
-            ref=
-        fi
-    fi
+    #decho "********************"
+    #for t in 
+    #decho "********************"
 
     # ask to confirm selected tag/branch (if any)
-    if [ -n "$ref" ]; then
+    if [ -n "$ref" ] && [ "$ref" != "${OPTS[$mode]}" ]; then
         read -p "use $mode [$ref]? [y/N]: "
         [ "$REPLY" == "y" ] || [ "$REPLY" == "yes" ] || ref=
     fi
@@ -413,7 +452,7 @@ add() {
     # ask to choose tag/branch if nothing is selected
     if [ -z "$ref" ]; then
         echo "choose $mode to clone"
-        select ref in "${!refs[@]}"; do break; done
+        select ref in "${refsarr[@]}"; do break; done
     fi
         
     [ -n "$ref" ] && [ ${refs[$ref]+_} ] || abort
@@ -424,37 +463,19 @@ add() {
 
     echo -e "${BOLD}selected $mode [$ref] [${refs[$ref]}]${CLEAR}"
 
-    # TODO: at this point, if something goes wrong, we should cleanup
-    # metadata, otherwise we'll have "zombie" packages
+	# clone the repository into the package's path
+	mkdir -vp "$PKG/$path" || abort
+	cd "$PKG/$path"
+	echo -en "$GREY"
 
-    local dir="$PKG/$path"
-    local cwd=`pwd`
+	$GIT clone --depth=1 -c advice.detachedHead=false -b $ref "$url" .
+	test $? || { rm -rf "$PKG/$path"; abort; }
 
-    if [ ! ${OPTS[debug]} ]; then
-        echo -en "$GREY"
-        mkdir -p $dir || abort
-        $GIT clone --depth=1 -c advice.detachedHead=false -b $ref $url $dir || abort
-        cd "$dir"
-        $GIT checkout -b "${MASTERBRANCH}" || abort
-        echo -en "$CLEAR"
-        cd "$cwd"
-    fi
+	$GIT checkout -b "${MASTERBRANCH}" || { rm -rf "$PKG/$path"; abort; }
+	echo -en "$CLEAR"
 
-    if [ ${OPTS[debug]} ]; then
-        echo ""
-        echo -e "${BOLD}**dry-run: nothing changed, nothing added**${CLEAR}"
-        echo "package '$pkg' metadata would contain:"
-        echo ""
-
-        for key in ${!md[@]}; do
-            printf "%15s: %s\n" $key ${md[$key]}
-        done
-
-        return
-    fi
-  
     md_dump $pkg
-    echo -e "${BOLD}package '$pkg' added${CLEAR}"
+    echo -e "${BOLD}package '$pkg' created${CLEAR}"
 }
 
 # check for available updates - for all packages, if no args
@@ -580,12 +601,14 @@ reflect() {
     echo ""
     [ "$REPLY" == "y" ] || return
 
-    read -n 1 -p "use all executables or edit the list? [a/e]: "
-    echo ""
-    if [ "$REPLY" == "e" ]; then
-        edit_list || abort
-    elif [ "$REPLY" != "a" ]; then
-        return
+    if [ ${#bins[@]} -gt 1 ] || [ ${#libs[@]} -gt 1 ]; then
+        read -n 1 -p "use all executables or edit the list? [a/e]: "
+        echo ""
+        if [ "$REPLY" == "e" ]; then
+            edit_list || abort
+        elif [ "$REPLY" != "a" ]; then
+            return
+        fi
     fi
 
     local target
@@ -821,6 +844,12 @@ update() {
     fi
 }
 
+# ---- main routine ---- #
+
+# figure out home directory and load config
+[ -L "$0" ] && confp=$(dirname $(readlink $0))/config.sh || confp=$(dirname $0)/config.sh
+. $confp || abort "can't load '$confp'"
+decho "loaded config [$confp]"
 
 declare CMD ARG1 ARG2
 declare -A OPTS
@@ -835,11 +864,11 @@ case $CMD in
         shift 2 ;;
     set )
         [ -z $2 ] && abort "missing <PKG>"
-        [ -z $3 ] && abort "missing <KEY>"
+        [ -z "$3" ] && abort "missing <KEY>"
         ARG1=$2
         ARG2=$3
         shift 3 ;;
-    remove | show | update | reflect )
+    remove | show | path | update | reflect )
         [ -z $2 ] && abort "missing <PKG>"
         [ "${2:0:1}" == "-" ] && abort "invalid <PKG>"
         ARG1=$2
@@ -859,17 +888,19 @@ case $CMD in
         abort "invalid command '$CMD'" ;;
 esac
 
-while getopts 'vdtbnRr:fu' opt; do
+while getopts 'vdtbnrfuR:T:B:' opt; do
     case $opt in
         v ) OPTS[verbose]=true ;;
         d ) OPTS[debug]=true ;;
         t ) OPTS[mode]=tag ;;
         b ) OPTS[mode]=branch ;;
         n ) OPTS[no_header]=true ;;
-        R ) OPTS[recursive]=true ;;
-        r ) OPTS[root]="$OPTARG" ;;
+        r ) OPTS[recursive]=true ;;
         f ) OPTS[force]=true ;;
         u ) OPTS[url]=true ;;
+        R ) OPTS[root]="$OPTARG" ;;
+		T ) OPTS[tag]="$OPTARG" ;;
+		B ) OPTS[branch]="$OPTARG" ;;
         ? ) abort ;;
     esac
 done
