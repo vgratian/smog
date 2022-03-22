@@ -1,7 +1,7 @@
 #!/bin/bash
 
 NAME=$(basename $0)
-VERSION='0.0'
+VERSION='0.0.1'
 
 version() {
     echo "${NAME} v${VERSION}"
@@ -69,20 +69,19 @@ Modes:
 }
 
 
-# terminal colors
-BOLD="\033[1m"
-CLEAR="\033[0m"
-RED="\033[31m"
-PINK="\033[35m"
-YELLOW="\033[93m"
-CYAN="\033[36m"
-GREY="\033[90m"
-
+# ----- helper functions ----- #
 
 # Exit program with optional error message
 abort() {
     [ -n "$1" ] && echo "$1" >&2
     exit 1
+}
+
+
+# Ask user and read yes/no answer
+ask() {
+    read -p "$1 [y/N]: "
+    [ "$REPLY" == y ] || [ "$REPLY" == yes ]
 }
 
 # Check if user wants to proceed
@@ -91,315 +90,127 @@ check_proceed() {
     [ "$REPLY" == "y" ] || [ "$REPLY" == "yes" ] || exit
 }
 
-# Test if package metadata file exist
-md_exists() {
-    test -e "$MDD/$1"
-}
 
-# Remove package metadata
-md_remove() {
-    rm -eaf "$MDD/$1"
-}
+# ----- command functions ----- #
 
-# Read package metadata and store into the AA 'md' (should
-# be declared by calling function). Metadata consists of
-# simple key-value pairs. As an exception, the 'bins' and
-# 'libs' fields consist from key-values on their own: if
-# calling function also wants those, it should additionally
-# declare the AAs 'bins' and 'libs'.
-md_load() {
-    local key val
-    while IFS=': ' read -r key val; do
-        md[$key]="$val"
-    done < "$MDD/$1"
-}
 
-# metadata can optinally contain list of binaries
-# for which we've created symlinks (this can be 
-# done with the 'reflect' command). this list
-# should be stored in two additional files.
-# calling function should declare two AA's:
-# 'bins' and 'libs'.
-md_load_links() {
-    local key val
-    if [ -e "$MDD/$1.bins" ]; then
-        while IFS=': ' read -r key val; do
-            bins[$key]="$val"
-        done < "$MDD/$1.bins"
-    fi
-
-    if [ -e "$MDD/$1/libs" ]; then
-        while IFS=': ' read -r key val; do
-            libs[$key]="$val"
-        done < "$MDD/$1.libs"
-    fi
-}
-
-# save package metadata (i.e. key-value pairs
-# of the AA 'md', overwrites file if it exists.
-md_dump() {
-    action="created"
-    md_exists "$1" && md_remove "$1" && action="updated"
-
-    local key fp="${MDD}/$1"
-    touch "$fp" || abort "can't create '$fp'"
-    for key in ${!md[@]}; do echo "$key: ${md[$key]}" >> "$fp"; done
-    echo "$action metadata '$fp'"
-}
-
-# save the two lists of symlinks in auxiliary 
-# metadata files, calling function should provide
-# the AA's 'bins' and 'libs'
-md_dump_links() {
-
-    local x bf="${MD}/$1.bins" lf="${MD}/$1.libs"
-    rm -f "$bf" "$lf"
-    for x in ${!bins[@]}; do [ -n ${bins[$x]} ] && echo "${bins[$x]}: $x" >> "$bf"; done
-    for x in ${!libs[@]}; do [ -n ${libs[$x]} ] && echo "${libs[$x]}: $x" >> "$lf"; done
-
-}
-
-md_list() {
-    ls "$MDD" | grep -vE "\.(libs)|(bins)$"
-}
-
-set() {
-    local -A md
-
-    md_exists $1 || abort "package '$1' does not exist"
-    md_load $1
-
-    local key val
-    read -r key val <<< $(echo "$2" | sed -E 's|^(\w+)=?(.*)$|\1 \2|')
-
-    if [ -z "$val" ]; then
-        [ ${md[$key]+_} ] && val="${md[$key]}"
-        echo "$key = $val"
-    else
-        echo "$key = $val"
-        if [ ${md[$key]+_} ]; then
-            check_proceed "overwrite existing value [${md[$key]}]?"
-        else
-            check_proceed "write to package metadata?"
-        fi
-
-        md[$key]="$val"
-        md_dump $1
-    fi
-}
-
-path() {
-    local -A md
-    md_exists $1 || abort "package '$1' does not exist"
-    md_load $1
-
-    echo "$PKG/${md[path]}"
-}
-
-# list all packages by reading metadata directory
+# List all packages. Print name, current head and URL.
 list() {
     local pkg
     local -A md
 
     if [ ! ${OPTS[no_header]} ]; then
-        printf "************************* ******************** **************************************************\n"
-        printf "%-25s %-20s %-50s\n" "package" "current head" "url"
-        printf "************************* ******************** **************************************************\n"
+        printf "****************************** ******************** "
+        printf "**************************************************\n"
+        printf "%-30s %-20s %-50s\n" "package" "current head" "url"
+        printf "****************************** ******************** "
+        printf "**************************************************\n"
     fi
 
     for pkg in $(md_list); do
         md=()
         md_load $pkg
-        printf "%-25s %-20s %-50s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
+        printf "%-30s %-20s %-50s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
     done
 }
 
-# show metadata of package
+# Show all metadata fields of package
 show() {
-    md_exists $1 || abort "package '$1' does not exist"
     local -A md
     local key
+
+    md_exists "$1" || abort "package '$1' does not exist"
     md_load "$1"
 
     if [ ! ${OPTS[no_header]} ]; then
-        printf "**************** ******************************************\n"
-        printf "        package: %b%s%b\n" "$BOLD" "$1" "$CLEAR"
-        printf "**************** ******************************************\n"
+        printf "****************************** **************************************************\n"
+        printf "package:                       %b%s%b\n" "$BOLD" "$1" "$CLEAR"
+        printf "****************************** **************************************************\n"
     fi
 
-    for key in ${!md[@]}; do printf "%15s: " "$key"; echo ${md[$key]}; done
+    for key in ${!md[@]}; do printf "%-30s " "$key"; echo ${md[$key]}; done
 
-    local bf="$MDD/$1.bins" lf="${MD}/$1.libs"
-    printf "%15s: " "bins"
-    [ -e "$bf" ] && wc -l "$bf" | cut -d' ' -f1 || echo 0
-    printf "%15s: " "libs"
-    [ -e "$lf" ] && wc -l "$lf" | cut -d' ' -f1 || echo 0
+    [ -e "$MDD/$1/.bins" ] && printf "%-30s " "bins" && wc -l < "$MDD/$1/.bins"
+    [ -e "$MDD/$1/.libs" ] && printf "%-30s " "libs" && wc -l < "$MDD/$1/.libs"
 }
 
-# remove package (i.e. remove its repository and metadata)
+# Print absolute path of package. Useful to quickly
+# change directory. E.g., run "cd `smog path PKG`".
+path() {
+    md_exists "$1" || abort "package '$1' does not exist"
+    grep '^path: ' "$MDD/$1" | cut -d' ' -f2-
+}
+
+# Remove package. I.e. remove git repository, metadata and
+# symbolic links (if any).
 remove() {
-    md_exists $1 || abort "package '$1' does not exist"
-    local -A md
-    md_load $1
-    local path="${md[path]}"
-    [ -n "$path" ] || abort "package '$1': missing path"
-    [ -d "$PKG/$path" ] || abort "package '$1': invalid path '$path'"
+    local p=$(path "$1")
+    [ -d "$p" ] || abort "invalid path: '$p'"
 
 	echo "warning: any local changes will be permanently lost"
     check_proceed "remove '$1'?"
 
-    rm -rf "$PKG/$path" || abort
-	echo "removed directory '$PKG/$path'"
+    rm -rf "$p" || abort
+	echo "removed repository '$p'"
 
 	# TODO
 
-    # local -A bins libs
-    # md_load_links $1
+    local -A bins libs
+    local k
+    md_load_links "$1"
 
-    # local k
-    # for k in ${!bins[@]}; do unlink "$BIN/$k" && echo "removed link '$BIN/$k'"; done
-    # for k in ${!libs[@]}; do unlink "$LIB/$k" && echo "removed link '$LIB/$k'"; done
+    for k in ${!bins[@]}; do unlink "$BIN/$k" && echo "removed link '$BIN/$k'"; done
+    for k in ${!libs[@]}; do unlink "$LIB/$k" && echo "removed link '$LIB/$k'"; done
 
-    md_remove $1
+    md_remove "$1"
     echo -e "${BOLD}package '$1' removed${CLEAR}"
 }
 
-# Parse URL of a git-repository (reference:
-# https://www.git-scm.com/docs/git-clone#_git_urls),
-# and write to 'scheme', 'host', 'port', 'path' and 'pkg'.
-url_parse() {
-    # parse http-style url
-    IFS='# ' read -r scheme host port path \
-        <<< $(echo "$1" | sed -E 's|^([a-z]+://)?([^/:]+)(:[0-9]+)?(/.*)|\1# \2# \3# \4|')
 
-    # parse ssh-style url
-    if [ -z "$host" ] || [ -z "$path" ]; then
-        IFS='# ' read -r scheme host path \
-            <<< $(echo "$1" | sed -E 's|^([a-z]+@)([^/:]+):(.+)|\1# \2# \3#|')
-    fi
-
-    [ -n "$host" ] && [ -n "$path" ] || return 1
-
-    # extract repo/package name from 'path'
-    IFS='# ' read -r path pkg \
-        <<< $(echo "$path" | sed -E 's|^(.*)?/([^/]+)/?$|\1# \2|')
-    pkg=$(echo "$pkg" | sed -E 's|\.git$||')
-
-    [ -z "$pkg" ] && return 1
-
-    # cleanup redundant parts
-    [ "${path::1}" == "/" ] && path="${path:1}"
-    [ "${host::4}" == "git." ] && host="${host:4}"
-
-    # reconstruct path that smog should use for local directory path
-    [ -n "$path" ] && path="$host/$path/$pkg" || path="$host/$pkg"
-}
-
-
-check_remote_refs() {
-    local target data flags plural
-    [ -z ${OPTS[$mode]} ] && target=available || target=matching
-
-    if [ $mode == tag ]; then
-        flags="-t --sort=version:refname $url ${OPTS[tag]-}"
-        plural=tags
-    else
-        flags="-h $url ${OPTS[branch]-}"
-        plural=branches
-    fi
-
-    echo "checking $target $plural..."
-
-	data=$( $GIT ls-remote $flags )
-    test $? || abort
-
-    while read -r sha refname; do
-        [ "${refname: -3}" == ^{} ] && continue  # TODO not sure what to do with those
-        ref=$(echo "$refname" | cut -s -d/ -f3)
-        # make sure 'ref' holds last one
-        [ -n "$ref" ] && refs[$ref]=$sha && refsarr+=($ref)
-    done <<< $data
-
-    echo "found ${#refs[@]} $plural"
-}
-
-
-check_refs() {
-    # pkg will be added either in 'tag' or 'branch' mode
-    # check for user preference, if none try 'tag' first
-    mode=${OPTS[mode]-tag}
-    [ ${OPTS[branch]} ] && mode=branch
-
-    if [ $mode == tag ]; then
-        check_remote_refs
-
-        if [ ${#refs[@]} -eq 0 ]; then
-            # abort if user asked for tags
-            [ ${OPTS[mode]} ] || [ ${OPTS[tag]} ] && abort
-			check_proceed "try branches?"
-			ref=
-			mode="branch"
-        fi
-
-    fi
-
-    if [ $mode == branch ]; then
-        check_remote_refs
-
-        [ ${#refs[@]} -eq 0 ] && abort
-
-        # mark 'master' or 'main' as preferred branch
-        ref=
-        [ ${refs[main]} ] && ref=main
-        [ ${refs[master]} ] && ref=master
-    fi
-}
-
-
-# Check if URL is valid and show available refs (tags or branches).
+# Check the URL is valid and show available refs (tags or branches).
+# This is like 'add' but without creating a local package.
+# TODO: mostly duplicate code - probably merge to 'add' or split 
+# into reulsable functioins.
 check() {
-    local url pkg path
+    local pkg path url="$1"
 
-    url_parse $1 || abort "failed to parse the URL"
+    url_parse "$url" || abort "failed to parse the URL"
 
-    echo "********************************************************************"
-    echo -e "    package: $BOLD$pkg$CLEAR"
-    echo "        URL: $url"
-    echo "********************************************************************"
+    printf "\n"
+    printf "%-10s: %s\n" "package" "$pkg"
+    printf "%-10s: %s\n" "url" "$url"
+    printf "%-10s: %s\n" "path" "$path"
+    printf "\n"
 
-    local mode flags
+    local -A refs
+	local -a refsarr
+    local mode ref refname sha
 
-    [ ${OPTS[mode]} ] && mode=${OPTS[mode]} || mode=tag
-    [ $mode == "tag" ] && flags="-t" || flags="-h"
+	check_git_refs
+    local r
+    for r in "${refsarr[@]}"; do echo "   * $r"; done
 
-    echo "checking avilable ${mode}s [$flags]..."
-
-    local ref sha
-
-    while read -r sha ref; do
-        ref=$(echo "$ref" | cut -d/ -f3)
-        printf "  %-25s %s\n" "$ref" "$sha"
-    done <<< $( $GIT ls-remote $flags "$url" )
-
-    echo ""
+    echo 
+    echo "  -> mode    = [$mode]"
+    echo "  -> ref     = [$ref]"
+    echo "  -> refname = [$refname]"
+    echo "  -> refsarr = [${#refsarr[@]}]"
 }
 
 # Add a repository, i.e. check for available refs (tags or branches),
 # clone the repository and create a metadata file.
 add() {
 
-	opts_show
-
     local pkg path url="$1"
     local -A md
 
     url_parse "$url" || abort "failed to parse the URL"
 
-    echo
-    echo "    package: $pkg"
-    echo "        URL: $url"
-    echo "       path: $PKG/$path/"
-	echo
+    printf "\n"
+    printf "%-10s: %s\n" "package" "$pkg"
+    printf "%-10s: %s\n" "url" "$url"
+    printf "%-10s: %s\n" "path" "$path"
+    printf "\n"
 
     check_proceed
 
@@ -418,7 +229,6 @@ add() {
     # check that pkg name is not already used
     # it's ok to have two git repositories with the same name
     # but in our metadata each package name should be unique.
-	decho "check pkg"
     while md_exists "$pkg"; do
         echo "package name already used"
         echo "you can use an alternative name"
@@ -428,8 +238,6 @@ add() {
         path=$(echo "$path" | sed -E s|([^/])+$|"$pkg"|)
     done
 
-	decho "ok"
-
 	# check available tags/branches and which
 	# ref we will use to clone the repo
 
@@ -437,11 +245,7 @@ add() {
 	local -a refsarr
     local mode ref refname sha
 
-	check_refs
-
-    #decho "********************"
-    #for t in 
-    #decho "********************"
+	check_git_refs
 
     # ask to confirm selected tag/branch (if any)
     if [ -n "$ref" ] && [ "$ref" != "${OPTS[$mode]}" ]; then
@@ -466,94 +270,172 @@ add() {
 	# clone the repository into the package's path
 	mkdir -vp "$PKG/$path" || abort
 	cd "$PKG/$path"
+
 	echo -en "$GREY"
+	$GIT clone --depth=1 -c advice.detachedHead=false -b "$ref" "$url" .
+	[ $? -ne 0 ] && rm -rf "$PKG/$path" && abort
 
-	$GIT clone --depth=1 -c advice.detachedHead=false -b $ref "$url" .
-	test $? || { rm -rf "$PKG/$path"; abort; }
-
-	$GIT checkout -b "${MASTERBRANCH}" || { rm -rf "$PKG/$path"; abort; }
+	$GIT checkout -b "${MASTERBRANCH}" 
+	[ $? -ne 0 ] && rm -rf "$PKG/$path" && abort
 	echo -en "$CLEAR"
 
     md_dump $pkg
     echo -e "${BOLD}package '$pkg' created${CLEAR}"
 }
 
-# check for available updates - for all packages, if no args
-# or for a specific package, if package name is provided
+# Sync package(s) with upstream repository. With no argument, all packages
+# are synced, otherwise only given packages is synced.
+# When all packages are synced, this function calls itself concurrently.
 sync() {
 
     if [ ! ${OPTS[no_header]} ]; then
-        printf "************************* ******************** **************************************************\n"
-        printf "%-25s %-20s %s\n" "package" "current head" "status"
-        printf "************************* ******************** **************************************************\n"
+        printf "****************************** ******************** "
+        printf "**************************************************\n"
+        printf "%-30s %-20s %s\n" "package" "current head" "status"
+        printf "****************************** ******************** "
+        printf "**************************************************\n"
     fi
 
-    if [ -n "$1" ]; then
-        sync_pkg $1
-    else
-        md_list | xargs -P ${NTHREADS} -I {} $0 sync {} -n
-        wait
-        echo ""
-        echo "syncing complete!"
-    fi
+    # Sync single package and exit
+    [ -n "$1" ] && sync_pkg "$1" && return
+
+    # Sync all packages - run 'smog PKG -n' for each package
+    # (-n will prevent printing header each time)
+    md_list | xargs -P ${NPROCS} -I {} $0 sync {} -n
+    wait
+    printf "\nsyncing complete!\n"
 }
 
-sync_pkg() {
+# Helper function for update:
+# Check if a valid tag is available for update
+check_tag_ref() {
 
-    local -A md refs
-    local color msg
+    local tag="${OPTS[tag]-}"
 
-    # TODO: update last commit hash
-    # cmd: git log pkgdata[ref] -1 --pretty=format:%H
-    md_load $1 || abort "package '$1' does not exist"
-    [ "${md[mode]}" == tag ] && sync_pkg_tag $1 || sync_pkg_branch $1
-    printf "%b%-25s %-20s %-50s%b\n" $color $1 "${md[mode]} '${md[ref]}'" "$msg" $CLEAR
-}
-
-sync_pkg_branch() {
-
-    read -r sha _ <<< $($GIT ls-remote -h "${md[url]}" refs/heads/"${md[ref]}")
-
-    if [ "${#sha}" -ne 40 ]; then
-        color=$RED
-        msg="error: ref '${md[ref]}' not found"
-    elif [ "$sha" == "${md[sha]}" ]; then
-        color=$GREY
-        msg="up-to-date"
-    else
-        color=$BOLD
-        msg="new commits(s)"
-    fi
-}
-
-sync_pkg_tag() {
-
-    local -i num=-1
-    local tag
-
-    while read -r tag; do
-        # seems like a git bug, avoid
-        [ "${tag: -3}" == "^{}" ] && continue
-
-        if [ $num -ge 0 ]; then
-            # optinally only grab tags matching pattern
-            if [ ${md[tag_pattern]+_} ]; then
-                grep -qP "${md[tag_pattern]}" || continue
-            fi
-            ((num++))
-            refs[$tag]=
-            ref=$tag
-        elif [ "$tag" == "${md[ref]}" ]; then
-            num=0
+    # explicitely asked to use a tag
+    if [ -n "$tag" ]; then
+        echo "you requested tag [$tag]"
+        [ ! ${refs[$tag]+_} ] && echo "tag '$tag' not found" && return 1
+        ref="$tag"
+        # sanity check: if tag is not in refsarr, it might be older
+        # than current tag (refsarr holds tags that are newer).
+        printf '%s\n' | grep -xq "$tag"
+        if [ $? -ne 0 ]; then
+            echo -en "${BOLD}${RED}"
+            echo "warning: '$tag' might be older than current tag '${md[ref]}'"
+            echo -en "$CLEAR"
         fi
-    done <<< $( $GIT ls-remote -t --sort=version:refname ${md[url]} | cut -d/ -f3 )
+    fi
 
-    case $num in
-        -1 ) color=$RED; msg="error: tag '${md[ref]}' not found" ;;
-        0 ) color=$GREY; msg="up-to-date" ;;
-        1 ) color=$BOLD; msg="new tag '$ref'" ;;
-        * ) color=$BOLD; msg="$num new tags, last: '$ref'" ;;
+    # if a tag is selected, ask user to confirm
+    if [ -n "$ref" ]; then
+        ask "update to [$ref]?"
+        # don't continue if only one tag is available
+        if [ $? -ne 0 ]; then
+            echo "answer = no"
+            [ -n "$tag" ] && return 1
+            [ ${#refsarr[@]} -eq 1 ] && return 1
+            ref=
+        else
+           echo "anser = yes"
+        fi
+    fi
+
+    # if nothing was selected, ask user choice
+    if [ -z "$ref" ]; then
+        select ref in "${refsarr[@]}"; do break; done
+    fi
+
+    echo "ref=[$ref]"
+    # final test
+    [ -n "$ref" ]
+}
+
+
+# updates a package repository:
+# - in branch mode: just update to the latest commits
+# - in tag mode: fetch and switch to the newer tag
+# if the 'force' option is set, will try to merge any
+# local changes before merging.
+update() {
+
+    local -A md
+
+    md_load "$1" || abort "package '$1' does not exist"
+
+    local status ref
+    local -a refsarr
+    local -A refs
+
+    echo -n "checking for updates.. "
+
+    if [ "${md[mode]}" == branch ]; then
+        sync_branch "${md[url]}" "${md[ref]}" "${md[sha]}"
+    elif [ "${md[mode]}" == tag ]; then
+        sync_tag "${md[url]}" "${md[ref]}" "${md[tag_pattern]-}"
+    else
+        abort "invalid mode '${md[mode]}'"
+    fi
+
+    case $? in 
+        0 ) echo "package is up-to-date"; return ;;
+        1 | 2 ) echo -e "${BOLD}${status}${CLEAR}" ;;
+        * ) abort "$status" ;;
     esac
+
+    echo "ref = [$ref]"
+
+    # If we get here, updates are available.
+    # For branch mode, we just need to update local branch
+    # For tag mode, multiple new tags ('releases') might
+    # be avaiable, so we ask user which to choose.
+    if [ "${md[mode]}" == tag ]; then
+        check_tag_ref || abort 'terminated'
+    fi
+
+    # Enter package directory
+    echo "entering directory '${md[path]}'"
+    cd "$PKG/${md[path]}" || abort
+    $GIT checkout -q "$MASTERBRANCH" || abort
+
+    # Before fetching remote changes, make sure our
+    # local branch does not gave uncommitted commits.
+    echo -n "checking local changes in '$MASTERBRANCH'.. "
+    if [ -z "$($GIT status -s)" ]; then
+        echo "OK: clean branch"
+    else
+        echo
+        echo "you have unstaged or uncommited changes"
+        ask "create autocommit?" || abort
+        echo -en "$GREY"
+        # TODO: something better than 'add .'
+        $GIT add . || abort
+        $GIT commit -m "autocommit by $NAME" || abort
+        echo -en "$CLEAR"
+    fi
+
+    # Fetch remote changes
+    echo -en "$GREY"
+    if [ "${md[mode]}" == tag ]; then
+        $GIT fetch origin tag "$ref" || abort
+        $GIT merge -m "automerge by $NAME" "$ref" || abort
+        md[ref]="$ref"
+    else 
+        $GIT fetch origin "$ref" || abort
+        md[sha]=$( $GIT log origin/"${md[ref]}" -1 --pretty=format:%H )
+        $GIT merge -m "automerge by $NAME" origin/"$ref" || abort
+    fi
+    echo -en "$CLEAR"
+
+    md_dump $1
+
+    echo -en "${BOLD}package '$1' updated to "
+    if [ "${md[mode]}" == tag ]; then
+        echo "tag '$ref'"
+    else
+        echo "remote branch '$ref' [$sha]"
+    fi
+    echo -en "$CLEAR"
 }
 
 # scan for binaries and executables in package repository
@@ -752,104 +634,27 @@ edit_lists() {
     fi
 }
 
-# updates a package repository:
-# - in branch mode: just update to the latest commits
-# - in tag mode: fetch and switch to the newer tag
-# if the 'force' option is set, will try to merge any
-# local changes before merging.
-update() {
-
-    local -A md
-    md_load ${1:?missing pkg} || abort "no such package '$1'"
-
-    local color msg ref sha
-    local -A refs
-
-    echo "checking for updates..."
-
-    if [ "${md[mode]}" == branch ]; then
-        sync_pkg_branch $1
-        ref="${md[ref]}"
-    elif [ "${md[mode]}" == tag ]; then
-        sync_pkg_tag $1
-    else
-        abort "invalid mode '${md[mode]}'"
-    fi
-
-    # little hack, since we try to reuse the sync_* functions
-    case "$color" in
-        "$GREY" ) echo "package is up-to-date"; return ;;
-        "$BOLD" ) ;;
-        * ) abort $msg ;;
-    esac
-
-    echo "[$msg]"
-
-    if [ "${md[mode]}" == tag ]; then
-        if [ ${#refs} -eq 1 ]; then
-            echo "new tag '$ref' available"
-        else
-            echo "${#refs} tags available, last: '$ref'"
-            # if the 'force' option is set, just use
-            # 'ref' which is likely the tag we want
-            if [ ! ${OPTS[force]} ]; then
-                read -n 1 -p "update to [$ref]? [y/N]: "
-                [ "$REPLY" == "y" ] || ref=
-
-                [ -z "$ref" ] && select ref in ${!refs[@]}; do break; done
-            fi
-        fi
-        [ -n "$ref" ] && [ ${refs[$ref]+_} ] || abort
-    else
-        echo "new commit(s) on branch ${md[ref]}"
-    fi
-
-    local cwd=`pwd`
-    cd "${PKG}/${md[path]}"
-    $GIT checkout -q "$MASTERBRANCH" || abort
-
-    # check for local changes
-    echo "checking for local changes on '$MASTERBRANCH'..."
-    if [ -n "$($GIT status -s)" ]; then
-        # unless forced, abort if there are unstaged changes
-        [ ! ${OPTS[force]} ] && abort "you have unstaged or uncommited changes"
-        echo "creating an autocommit..."
-        echo -en "$GREY"
-        $GIT add . || abort
-        $GIT commit -m "autocommit by $NAME" || abort
-        echo -en "$CLEAR"
-    else
-        echo "clean branch"
-    fi
-
-    echo -en "$GREY"
-    if [ "${md[mode]}" == tag ]; then
-        $GIT fetch origin tag "$ref" || abort
-        md[ref]="$ref"
-    else 
-        $GIT fetch origin "$ref" || abort
-        md[sha]="$sha"
-    fi
-
-    $GIT merge -m "automerge by $NAME" "$ref" || abort
-    echo -en "$CLEAR"
-    cd $cwd
-
-    md_dump $1
-
-    if [ "${md[mode]}" == tag ]; then
-        echo -e "${BOLD}updated to tag '$ref'${CLEAR}"
-    else
-        echo -e "${BOLD}updated to branch '$ref' [$sha]${CLEAR}"
-    fi
-}
 
 # ---- main routine ---- #
+
+# DEBUG
+#echo -en "\033[90m"
 
 # figure out home directory and load config
 [ -L "$0" ] && confp=$(dirname $(readlink $0))/config.sh || confp=$(dirname $0)/config.sh
 . $confp || abort "can't load '$confp'"
-decho "loaded config [$confp]"
+
+# TODO: remove cd && use $SMOG_PATH
+cd `dirname $confp`
+
+declare LIBS
+LIBS=$(ls util) || abort
+
+while read -r lib; do
+    . util/$lib || abort
+    #echo "loaded '$lib'"
+done <<< $LIBS
+unset LIBS
 
 declare CMD ARG1 ARG2
 declare -A OPTS
@@ -904,5 +709,8 @@ while getopts 'vdtbnrfuR:T:B:' opt; do
         ? ) abort ;;
     esac
 done
+
+#echo "CMD=[$CMD] - ARG1=[$ARG1] - ARG2=[$ARG2]"
+#echo -en "\033[0m"
 
 $CMD $ARG1 $ARG2
