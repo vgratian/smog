@@ -123,8 +123,8 @@ _show() {
 
     for key in ${!md[@]}; do printf "%-30s " "$key"; echo ${md[$key]}; done
 
-    [ -e "$MDD/$1/.bins" ] && printf "%-30s " "bins" && wc -l < "$MDD/$1.bins"
-    [ -e "$MDD/$1/.libs" ] && printf "%-30s " "libs" && wc -l < "$MDD/$1.libs"
+    [ -f "$MDD/$1.bins" ] && printf "%-30s " "bins" && wc -l < "$MDD/$1.bins"
+    [ -f "$MDD/$1.libs" ] && printf "%-30s " "libs" && wc -l < "$MDD/$1.libs"
 }
 
 # Print absolute path of package. Useful to quickly
@@ -145,17 +145,22 @@ _remove() {
 	echo "warning: any local changes will be permanently lost"
     ask "remove '$1'?" || exit
 
+    if md_has_links "$1"; then
+        local -A bins libs
+        md_load_links "$1"
+        echo "cleaning up symlinks.."
+        if [ ${#bins[@]} -ne 0 ]; then
+            links_remove bins "$BIN" "$p"
+            links_clean bins "$BIN" "$p"
+        fi
+        if [ ${#libs[@]} -ne 0 ]; then
+            links_remove libs "$LIB" "$p"
+            links_clean libs "$LIB" "$p"
+        fi
+    fi
+
     rm -rf "$p" || abort
 	echo "removed repository '$p'"
-
-	# TODO
-
-    local -A bins libs
-    local k
-    md_load_links "$1"
-
-    for k in ${!bins[@]}; do unlink "$BIN/$k" && echo "removed link '$BIN/$k'"; done
-    for k in ${!libs[@]}; do unlink "$LIB/$k" && echo "removed link '$LIB/$k'"; done
 
     md_remove "$1"
     echo -e "${BOLD}package '$1' removed${CLEAR}"

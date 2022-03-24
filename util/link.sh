@@ -1,19 +1,13 @@
 #!/bin/bash
 
-# workflow:
-#  - create symlink for each target, unless
-#       - exists: just skip
-#       - link name used: warn and skip
-#  - second iteration: check all links and remove dead links
-
+# Create symlinks for the targets provided and print
+# what is done. If the symlinks exists (i.e. points to
+# the same target), just skip. If a symlink exists with
+# the same linkname but points somewhere else, warn.
 # Args:
-#   $1 - AA containing targets as keys
+#   $1 - AA containing targets as keys and linkname as values
 #   $2 - Directory where we create links (i.e. "destination")
 #   $3 - Root directory of targets (i.e. "prefix")
-#   $4 - If not empty, check existing links to 'Root' and clean dead links
-
-# printf "%-15s %-20% %s\n"
-
 links_create() {
     local -n targets=$1
     local dest="$2" root="$3"
@@ -35,10 +29,12 @@ links_create() {
 
         ln -s "$root/$target" "$dest/$linkname" || abort
         ((added++))
- 
     done
 }
 
+# Look for dead links in the directory 'dest'. I.e., any
+# symlink that points to a file in 'root', but is not in
+# our targets.
 links_clean() {
     local -n targets=$1
     local dest="$2" root="$3"
@@ -62,90 +58,34 @@ links_clean() {
     done
 }
 
+# Remove all links to the targets provided.
 links_remove() {
     local -n targets=$1
     local dest="$2" root="$3"
-    local linkname targetp target
+    local linkname target realtarget
 
     for target in "${!targets[@]}"; do
         linkname="${targets[$target]}"
-    done
-
-}
-
-links_create2() {
-    local -n targets=$1
-    local dest="$2" root="$3"
-
-    # size of root path (to compare paths)
-    local -i n=${#root}
-
-    local target targetlong linkname
-
-    # scan link directory for existing or dead links
-    for linkname in $( ls "$dest" ); do
         [ -L "$dest/$linkname" ] || continue
-        # full path of target file
-        targetlong=$( readlink "$dest/$linkname" )
-        # ignore if link doesn't point to our root directory
-        [ "${targetlong::$n}" == "$root" ] || continue
-
-        # relative target path
-        target=${targetlong:$n}
-
-        # link already exists, make note so that we don't recreate
-        if [ ${targets[$target]+_} ]; then
-            bins[$target]="$linkname"
-            ((kept++))
-            printf "%-10s %-25s %s\n" "<keep>" "$linkname" "$target"
-        else
-            # remove dead link
+        realtarget=$(readlink "$dest/$linkname")
+        if [ "$realtarget" == "$target" ]; then
             unlink "$dest/$linkname"
-            ((removed++))
-            printf "%-10s %-25s %s\n" "<remove>" "$linkname" "$target"
+            targets[$target]=
+            printf "%-10s %-25s %s\n" "removed" "$dest/$linkname" "$target"
+        else
+            printf "%-10s %-25s %s\n" "skipped" "$dest/$linkname" "$target"
         fi
     done
-
-    # create links for each target (except those we skipped)
-    # and check for name conflicts
-    #for target in "${!targets[@]}"; do
-
-        # skip target if a link already exists
-    #    [ -n "${targets[$target]}" ] && continue
-
-     #   linkname=$( basename "$target" )
-
-     #   # name conflict
-     #   if [ -f "$dest/$linkname" ]; then
-     #       ((conflicts++))
-     #       printf "%-10s %-25s %s\n" "<conflict>" "$linkname" "$target"
-
-
-
-    #done
-
-
-    #for t in "${!targets[@]}"; do
-        # link name
-     #   n=$( basename "$target" )
-        
-        # link already exists
-      #  if [ -e "$dest/$n" ]; then
-            
-      #  fi
-
-
-    #done
-
 }
 
-
-# Positional arguments:
-#   $1 - AA where we put binary targets
+# Scan for binaries, shell scripts and sharedlibs. 
+# Mark them as targets and create a link name.
+# Args:
+#   $1 - AA where we put executable targets
 #   $2 - AA where we put shared lib targets
 #   $3 - Root directory to scan
 #   $4 - Subdirectory (always empty if non-recursive)
-#   $5 - If not empty, runs recursively in subdirectories
+#   $5 - If not empty, run recursively in subdirectories
 links_scan() {
     local -n btargs=$1
     local -n ltargs=$2
@@ -185,69 +125,67 @@ links_scan() {
     done
 }
 
-COMMENT_INTRO="
-# Below is the list of files that smog detected and will create
-# symlinks for. Each line consists of the linkname (basename)
-# and the filepath, seperated by ' -> '. Remove a line if you
-# don't want a file to be linked. You can also change the linkname.
-#
-# Please preserve the file format. Please don't change comments!"
-
-COMMENT_BINS="# -- binaries or scripts -- #"
-
-COMMENT_LIBS="# -- shared libraries -- #"
 
 links_edit() {
     local -n btargs=$2
     local -n ltargs=$3
 
-    local fn='_smog_links_edit.txt'
+    local fn='__smog_links_tmp'
     local k x line cur
 
-    [ -f "$fn" ] && rm -v "$fn"
-    echo "$COMMENT_INTRO" > "$fn"
-    echo "#" >> "$fn"
-    echo "# Note: filepaths are relative in the 'root' directory:" >> "$fn"
-    echo "# $1" >> "$fn"
-    echo "" >> "$fn"
+    local bsection="# -- binaries or scripts -- #"
+    local lsection="# -- shared libraries -- #"
+
+    [ -f "$fn" ] && rm -v "$fn"  # safe?
+
+    cat << EOF > "$fn"
+# Below is the list of files that smog detected and will create
+# symlinks for. Each line consists of the linkname (basename)
+# and the filepath, seperated by ' -> '. Remove a line if you
+# don't want a file to be linked. You can also change the linkname.
+#
+# Note: filepaths are relative in the 'root' directory:
+# $1
+#
+# Please preserve the file format. Please don't change comments!"
+EOF
 
     if [ ${#btargs[@]} -ne 0 ]; then
-        echo "$COMMENT_BINS" >> "$fn"
+        echo "$bsection" >> "$fn"
         echo "" >> "$fn"
         for k in "${!btargs[@]}"; do echo "${btargs[$k]} -> $k" >> "$fn"; done
     fi
 
     if [ ${#ltargs[@]} -ne 0 ]; then
         echo "" >> "$fn"
-        echo "$COMMENT_LIBS" >> "$fn"
+        echo "$lsection" >> "$fn"
         echo "" >> "$fn"
         for k in "${!ltargs[@]}"; do echo "${ltargs[$k]} -> $k" >> "$fn"; done
     fi
 
-    echo "created tmp file [$fn]"
+    echo "created temporary file '$fn'"
+
     $EDITOR "$fn"
 
-    # TODO read results
     btargs=()
     ltargs=()
     while read -r line; do
         [ -z "$line" ] && continue
 
         if [ "${line::1}" == '#' ]; then
-            [ "$line" == "$COMMENT_BINS" ] && cur=b && continue
-            [ "$line" == "$COMMENT_LIBS" ] && cur=l
+            [ "$line" == "$bsection" ] && cur=b && continue
+            [ "$line" == "$lsection" ] && cur=l
             continue
         fi
 
         [ -z "$cur" ] && continue
 
         IFS='# ' read -r k x <<< $(echo "$line" | sed -E 's|^(.+) -> (.+)$|\1# \2|')
-        echo "   -> $k = [$x]"
+        #echo "   -> $k = [$x]"
         [ -n "$x" ] && [ -n "$k" ] || continue # TODO warn
         [ -f "$1/$x" ] || abort "invalid file '$1/$x'"
         [ "$cur" == b ] && btargs["$x"]="$k" || ltargs["$x"]="$k"
     done < "$fn"
 
-    echo " -- OK -- "
-    # TODO remove tmp file
+    rm -v "$fn"
 }
