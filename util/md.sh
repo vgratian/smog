@@ -24,6 +24,7 @@ md_remove() {
 # Read package metadata and store into the AA 'md'
 # (should be declared by calling function).
 md_load() {
+    md_exists "$MDD/$1" || return 1
     local key val
     while IFS=': ' read -r key val; do
         md[$key]="$val"
@@ -34,19 +35,22 @@ md_load() {
 # AA's: 'bins' and 'libs'.
 md_load_links() {
     local key val
-    if [ -e "$MDD/$1.bins" ]; then
+    if [ -f "$MDD/$1.bins" ]; then
         while IFS=': ' read -r key val; do
             bins[$key]="$val"
         done < "$MDD/$1.bins"
     fi
 
-    if [ -e "$MDD/$1.libs" ]; then
+    if [ -f "$MDD/$1.libs" ]; then
         while IFS=': ' read -r key val; do
             libs[$key]="$val"
         done < "$MDD/$1.libs"
     fi
 }
 
+md_has_links() {
+    [ -f "$MDD/$1".bins ] || [ -f "$MDD/$1".libs ]
+}
 # Save key-value pairs of the AA 'md' into package
 # metadata. Overwrites file if it exists.
 md_dump() {

@@ -1,4 +1,6 @@
 
+**CODE IS BEING REFACTORED -- DON'T USE OR UPDATE**
+
 **smog** (**s**ource **m**anager **o**ver **g**it) is a utility for maintaining and updating packages that I download from various git-repositories and often have modified the source-code.
 
 smog is not a package manager, since:
@@ -15,7 +17,7 @@ currently this utility is not stable and very likely I will move it to anther la
 ### Requirements
 
 - `git`
-- `bash` (>= `4.0`)
+- `bash` (>= `4.3`)
 - a few common bash commands:
     * from GNU coreutils: `[`, `cat`, `cut`, `ln`, `readlink`, `tr`, etc.
     * `getopts`

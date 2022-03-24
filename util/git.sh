@@ -11,27 +11,14 @@
 #   - mode      type of refname (branch or tag)
 #   - prefer    name of preferred branch or tag name, if not
 #               empty, only fetch matching refs.
-list_git_refs() {
+list_refs() {
     local url="$1" mode="$2" prefer="$3"
     local data flags
 
-    # If user requested a specific tag or branch, we will only
-    # check if those are available. Otherwise we list all
-    # available refs.
-    #[ -z ${OPTS[$mode]} ] && target=available || target=matching
-
     [ $mode == tag ] && flags="-t --sort=version:refname" || flags="-h"
 
-    #if [ $mode == tag ]; then
-    #    flags="-t --sort=version:refname $url ${OPTS[tag]-}"
-    #    plural=tags
-    #else
-    #    flags="-h $url ${OPTS[branch]-}"
-    #    plural=branches
-    #fi
-
 	data=$( $GIT ls-remote $flags $url $prefer )
-    test $? || return 1
+    [ $? -eq 0 ] || return 1
 
     local sha refname
 
@@ -42,45 +29,84 @@ list_git_refs() {
         ref=$(echo "$refname" | cut -s -d/ -f3)
         [ -n "$ref" ] && refs[$ref]=$sha && refsarr+=($ref)
     done <<< $data
-
 }
 
 # Helper function for the command 'add'. Checks user preference
 # and loads available refs and shas.
-check_git_refs() {
+check_refs() {
     # A repo can be cloned either using a tag or a branch as ref.
     # If user has no preference, we will check tags first.
     mode=${OPTS[mode]-tag}
     [ ${OPTS[branch]} ] && mode=branch
 
     if [ $mode == tag ]; then
-        [ "${OPTS[tag]}" ] && echo "checking matching tags.." || echo "checking available tags.."
-        list_git_refs "$url" tag "${OPTS[tag]-}"
-        echo " -> found ${#refs[@]}"
+        [ "${OPTS[tag]}" ] && echo -n "checking matching tags.. " || \
+            echo -n "checking available tags.."
+        list_refs "$url" tag "${OPTS[tag]-}" || return 1
+        echo "found ${#refs[@]}"
 
         if [ ${#refs[@]} -eq 0 ]; then
-            # abort if user asked for tags
-            [ ${OPTS[mode]} ] || [ ${OPTS[tag]} ] && abort
-			check_proceed "try branches?"
+            # Abort if user explicitely asked for tags
+            [ ${OPTS[mode]} ] || [ ${OPTS[tag]} ] && return 1
+			ask "try branches?" || return 1
 			ref=
-			mode="branch"
+			mode=branch
         fi
-
     fi
 
     if [ $mode == branch ]; then
-        [ "${OPTS[branch]}" ] && echo "checking matching branches.." || echo "checking available branches.."
-        list_git_refs "$url" branch "${OPTS[branch]-}"
-        echo " -> found ${#refs[@]}"
+        [ "${OPTS[branch]}" ] && echo -n "checking matching branches.. " \
+            || -n echo "checking available branches.. "
+        list_refs "$url" branch "${OPTS[branch]-}"
+        echo "found ${#refs[@]}"
 
-        [ ${#refs[@]} -eq 0 ] && abort
+        [ ${#refs[@]} -eq 0 ] && return 1
 
-        # mark 'master' or 'main' as preferred branch
+        # Mark 'master' or 'main' as preferred branch, unless
+        # the '-B' flag was provided with a branch name.
         if [ ! "${OPTS[branch]}" ]; then
             ref=
             [ ${refs[main]} ] && ref=main
             [ ${refs[master]} ] && ref=master
         fi
     fi
+}
+
+# Helper function for command 'update'. Check if
+# a valid tag is available for update.
+check_tags() {
+
+    local tag="${OPTS[tag]-}"
+
+    # explicitely asked to use a tag
+    if [ -n "$tag" ]; then
+        [ ! ${refs[$tag]+_} ] && echo "tag '$tag' not found" && return 1
+        ref="$tag"
+        # If tag is not in 'refsarr', it is likely older than current
+        # tag ('refsarr' holds tags that are newer).
+        if ! printf '%s\n' | grep -xq "$tag"; then
+            echo -en "$BOLD"
+            echo "warning: '$tag' might be older than current '${md[ref]}'"
+            echo -en "$CLEAR"
+        fi
+    fi
+
+    # if a tag is selected, ask user to confirm
+    if [ -n "$ref" ]; then
+        if ! ask "update to [$ref]?"; then
+            # don't continue if only one tag is available
+            [ -n "$tag" ] && return 1
+            [ ${#refsarr[@]} -eq 1 ] && return 1
+            ref= # unset, so we ask user to select
+        fi
+    fi
+
+    # if nothing was selected, ask user choice
+    if [ -z "$ref" ]; then
+        select ref in "${refsarr[@]}"; do break; done
+    fi
+
+    # final test
+    test -n "$ref"
 }
 

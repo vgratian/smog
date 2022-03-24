@@ -77,25 +77,19 @@ abort() {
     exit 1
 }
 
-
-# Ask user and read yes/no answer
+# Ask user and read yes/no answer.
+# Default answer is always 'no'.
 ask() {
-    read -p "$1 [y/N]: "
+    read -p "${1:-proceed?} [y/N]: "
     [ "$REPLY" == y ] || [ "$REPLY" == yes ]
 }
 
-# Check if user wants to proceed
-check_proceed() {
-    read -p "${1:-proceed?} [y/N]: "
-    [ "$REPLY" == "y" ] || [ "$REPLY" == "yes" ] || exit
-}
-
-
-# ----- command functions ----- #
-
+# -------- command functions  -------- #
+# prefixed with '_' to avoid collision
+# or confusion with bash commands.
 
 # List all packages. Print name, current head and URL.
-list() {
+_list() {
     local pkg
     local -A md
 
@@ -109,18 +103,17 @@ list() {
 
     for pkg in $(md_list); do
         md=()
-        md_load $pkg
+        md_load "$pkg"
         printf "%-30s %-20s %-50s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
     done
 }
 
 # Show all metadata fields of package
-show() {
+_show() {
     local -A md
     local key
 
-    md_exists "$1" || abort "package '$1' does not exist"
-    md_load "$1"
+    md_load "$1" || abort "package '$1' does not exist"
 
     if [ ! ${OPTS[no_header]} ]; then
         printf "****************************** **************************************************\n"
@@ -130,25 +123,27 @@ show() {
 
     for key in ${!md[@]}; do printf "%-30s " "$key"; echo ${md[$key]}; done
 
-    [ -e "$MDD/$1/.bins" ] && printf "%-30s " "bins" && wc -l < "$MDD/$1/.bins"
-    [ -e "$MDD/$1/.libs" ] && printf "%-30s " "libs" && wc -l < "$MDD/$1/.libs"
+    [ -e "$MDD/$1/.bins" ] && printf "%-30s " "bins" && wc -l < "$MDD/$1.bins"
+    [ -e "$MDD/$1/.libs" ] && printf "%-30s " "libs" && wc -l < "$MDD/$1.libs"
 }
 
 # Print absolute path of package. Useful to quickly
 # change directory. E.g., run "cd `smog path PKG`".
-path() {
+_path() {
     md_exists "$1" || abort "package '$1' does not exist"
     grep '^path: ' "$MDD/$1" | cut -d' ' -f2-
 }
 
 # Remove package. I.e. remove git repository, metadata and
 # symbolic links (if any).
-remove() {
+_remove() {
+    md_exists "$1" || abort "package '$1' does not exist"
+    
     local p=$(path "$1")
     [ -d "$p" ] || abort "invalid path: '$p'"
 
 	echo "warning: any local changes will be permanently lost"
-    check_proceed "remove '$1'?"
+    ask "remove '$1'?" || exit
 
     rm -rf "$p" || abort
 	echo "removed repository '$p'"
@@ -167,11 +162,9 @@ remove() {
 }
 
 
-# Check the URL is valid and show available refs (tags or branches).
+# Check the URL is valid and check available git refs (tags/branches).
 # This is like 'add' but without creating a local package.
-# TODO: mostly duplicate code - probably merge to 'add' or split 
-# into reulsable functioins.
-check() {
+_check() {
     local pkg path url="$1"
 
     url_parse "$url" || abort "failed to parse the URL"
@@ -186,23 +179,16 @@ check() {
 	local -a refsarr
     local mode ref refname sha
 
-	check_git_refs
-    local r
-    for r in "${refsarr[@]}"; do echo "   * $r"; done
+	check_refs || abort
 
-    echo 
-    echo "  -> mode    = [$mode]"
-    echo "  -> ref     = [$ref]"
-    echo "  -> refname = [$refname]"
-    echo "  -> refsarr = [${#refsarr[@]}]"
+    for r in "${refsarr[@]}"; do echo "  * $r"; done
 }
 
 # Add a repository, i.e. check for available refs (tags or branches),
 # clone the repository and create a metadata file.
-add() {
+_add() {
 
     local pkg path url="$1"
-    local -A md
 
     url_parse "$url" || abort "failed to parse the URL"
 
@@ -212,23 +198,21 @@ add() {
     printf "%-10s: %s\n" "path" "$path"
     printf "\n"
 
-    check_proceed
+    ask 'proceed?' || exit
 
-    # TODO check for blanks in url/path
+    local -A md
     md[url]=$url
-    md[path]=$path
 
-    # if URL is already used for another package
-    # throw a warning
+    # Warn if URL used for another package
     local used=$(grep -rlE "^url: ${url}$" "$MDD/")
     if [ -n "$used" ]; then
         echo "warning: URL already used by package '`basename $used`'"
-        check_proceed
+        ask 'continue anyway?' || exit
     fi
 
-    # check that pkg name is not already used
-    # it's ok to have two git repositories with the same name
-    # but in our metadata each package name should be unique.
+    # Check that pkg name is not already used. It's OK to
+    # have two git repositories with the same name, but in
+    # our metadata each package name should be unique.
     while md_exists "$pkg"; do
         echo "package name already used"
         echo "you can use an alternative name"
@@ -238,19 +222,19 @@ add() {
         path=$(echo "$path" | sed -E s|([^/])+$|"$pkg"|)
     done
 
+    md[path]="$PKG/$path"
+
 	# check available tags/branches and which
 	# ref we will use to clone the repo
-
     local -A refs
 	local -a refsarr
     local mode ref refname sha
 
-	check_git_refs
+	check_refs
 
     # ask to confirm selected tag/branch (if any)
     if [ -n "$ref" ] && [ "$ref" != "${OPTS[$mode]}" ]; then
-        read -p "use $mode [$ref]? [y/N]: "
-        [ "$REPLY" == "y" ] || [ "$REPLY" == "yes" ] || ref=
+        ask "use $mode [$ref]?" || ref=
     fi
 
     # ask to choose tag/branch if nothing is selected
@@ -263,11 +247,12 @@ add() {
 
     md[mode]=$mode
     md[ref]=$ref
-    md[sha]=${refs[$ref]}
+    # SHA only relevant for branches
+    [ "$mode" == branch ] && md[sha]=${refs[$ref]}
 
-    echo -e "${BOLD}selected $mode [$ref] [${refs[$ref]}]${CLEAR}"
+    echo -e "${BOLD}selected $mode [$ref] ${CLEAR}"
 
-	# clone the repository into the package's path
+	# Clone repo into the package's path
 	mkdir -vp "$PKG/$path" || abort
 	cd "$PKG/$path"
 
@@ -279,14 +264,14 @@ add() {
 	[ $? -ne 0 ] && rm -rf "$PKG/$path" && abort
 	echo -en "$CLEAR"
 
-    md_dump $pkg
+    md_dump "$pkg"
     echo -e "${BOLD}package '$pkg' created${CLEAR}"
 }
 
 # Sync package(s) with upstream repository. With no argument, all packages
 # are synced, otherwise only given packages is synced.
 # When all packages are synced, this function calls itself concurrently.
-sync() {
+_sync() {
 
     if [ ! ${OPTS[no_header]} ]; then
         printf "****************************** ******************** "
@@ -306,61 +291,14 @@ sync() {
     printf "\nsyncing complete!\n"
 }
 
-# Helper function for update:
-# Check if a valid tag is available for update
-check_tag_ref() {
-
-    local tag="${OPTS[tag]-}"
-
-    # explicitely asked to use a tag
-    if [ -n "$tag" ]; then
-        echo "you requested tag [$tag]"
-        [ ! ${refs[$tag]+_} ] && echo "tag '$tag' not found" && return 1
-        ref="$tag"
-        # sanity check: if tag is not in refsarr, it might be older
-        # than current tag (refsarr holds tags that are newer).
-        printf '%s\n' | grep -xq "$tag"
-        if [ $? -ne 0 ]; then
-            echo -en "${BOLD}${RED}"
-            echo "warning: '$tag' might be older than current tag '${md[ref]}'"
-            echo -en "$CLEAR"
-        fi
-    fi
-
-    # if a tag is selected, ask user to confirm
-    if [ -n "$ref" ]; then
-        ask "update to [$ref]?"
-        # don't continue if only one tag is available
-        if [ $? -ne 0 ]; then
-            echo "answer = no"
-            [ -n "$tag" ] && return 1
-            [ ${#refsarr[@]} -eq 1 ] && return 1
-            ref=
-        else
-           echo "anser = yes"
-        fi
-    fi
-
-    # if nothing was selected, ask user choice
-    if [ -z "$ref" ]; then
-        select ref in "${refsarr[@]}"; do break; done
-    fi
-
-    echo "ref=[$ref]"
-    # final test
-    [ -n "$ref" ]
-}
-
-
 # updates a package repository:
 # - in branch mode: just update to the latest commits
 # - in tag mode: fetch and switch to the newer tag
 # if the 'force' option is set, will try to merge any
 # local changes before merging.
-update() {
+_update() {
 
     local -A md
-
     md_load "$1" || abort "package '$1' does not exist"
 
     local status ref
@@ -390,12 +328,12 @@ update() {
     # For tag mode, multiple new tags ('releases') might
     # be avaiable, so we ask user which to choose.
     if [ "${md[mode]}" == tag ]; then
-        check_tag_ref || abort 'terminated'
+        check_tags || abort 'terminated'
     fi
 
     # Enter package directory
     echo "entering directory '${md[path]}'"
-    cd "$PKG/${md[path]}" || abort
+    cd "${md[path]}" || abort
     $GIT checkout -q "$MASTERBRANCH" || abort
 
     # Before fetching remote changes, make sure our
@@ -427,7 +365,7 @@ update() {
     fi
     echo -en "$CLEAR"
 
-    md_dump $1
+    md_dump "$1"
 
     echo -en "${BOLD}package '$1' updated to "
     if [ "${md[mode]}" == tag ]; then
@@ -438,202 +376,103 @@ update() {
     echo -en "$CLEAR"
 }
 
-# scan for binaries and executables in package repository
-# this command is useful after you've build a package
-# TODO: poorly tested and probably very buggy
-reflect() {
+# Scan for executables and sharedlibs in a the root directory
+# of a package and create symlinks in the Smog directories
+# '$BIN' and '$LIB' respectively.
+# In recursive mode, scan the entire filetree of a package.
+_link() {
     local -A md
-    md_exists "$1" || abort "package '$1' does not exist"
-    md_load "$1"
+    md_load "$1" || abort "package '$1' does not exist"
 
-    local dir="${md[path]}"
-    # if a build directory is specified, only scan that
-    if [ ${OPTS[root]} ]; then
-        [ "${OPTS[root]: -1}" == "/" ] && OPTS[root]="${OPTS[root]::-1}"
-        dir+="/${OPTS[root]}"
-        if [ ! ${md[builddir]+_} ] || [ "${md[builddir]}" != "${OPTS[root]}" ]; then
-            md[builddir]="${OPTS[root]}"
-            [ ! ${OPTS[debug]} ] && md_dump "$1"
-        fi
+    # Root directory of the package.
+    local root="${md[path]}"
+
+    # User flag '-R' or metadata field 'builddir' tell
+    # us to scan only a subdirectory.
+    local dir
+    if [ ${OPTS[root]+_} ]; then
+        dir="${OPTS[root]}"
     elif [ ${md[builddir]+_} ]; then
-        dir+="/${md[builddir]}"
+        dir="${md[builddir]}"
     fi
-    dir="$PKG/$dir"
+    [ "${dir: -1}" == / ] && dir="${dir::-1}" # strip trailing '/'
 
-    [ -d "$dir" ] || abort "directory '$dir' does not exist"
-    [ -L "$dir" ] && abort "directory '$dir' is a symlink"
+    # sanity check
+    [ -d "$root/$dir" ] || abort "path '$root/$dir' does not exist"
+    [ -L "$root/$dir" ] && abort "path '$root/$dir' is a symlink"
 
+
+    # --- Scan for targets --- #
+
+    # Each of these two AA's contains the target file as key
+    # and the linkname as value. Target file is the relative
+    # path of the file in the 'root' directory.
     local -A bins libs
-    echo "scanning directory '$dir'..."
-    reflect_dir "$dir"
+
+    echo "scanning '$root/$dir'"
+    links_scan bins libs "$root" "$dir" ${OPTS[recursive]-}
     echo "detected ${#bins[@]} executables and ${#libs[@]} libraries"
-    # don't continue if nothing detected
-    [ ${#bins[@]} -eq 0 ] && [ ${#libs[@]} -eq 0 ] && return
 
-    # show lists
-    local key
-    echo ""
-    [ ${#bins[@]} -ne 0 ] && echo "executables:"
-    for key in ${!bins[@]}; do echo " - $key"; done
+    # if nothing detected, we're done here
+    [ ${#bins[@]} -eq 0 ] && [ ${#libs[@]} -eq 0 ] && exit
 
-    [ ${#libs[@]} -ne 0 ] && echo "libraries:"
-    for key in ${!libs[@]}; do echo " - $key"; done
+    # If package already has links, mark our action as 'update'.
+    # This means we can expect that some links already exists
+    # and we will check for dead links.
+    local update
+    md_has_links "$1" && update=update
+    ask "${update-create} symlinks?" || exit
 
-    read -n 1 -p "create and update links? [y/N]: "
-    echo ""
-    [ "$REPLY" == "y" ] || return
-
+    # It's possible that we detect a lot of executables that
+    # (e.g. build or test scripts) that would create garbage
+    # symlinks, so give user option to filter the lists.
     if [ ${#bins[@]} -gt 1 ] || [ ${#libs[@]} -gt 1 ]; then
-        read -n 1 -p "use all executables or edit the list? [a/e]: "
-        echo ""
-        if [ "$REPLY" == "e" ]; then
-            edit_list || abort
-        elif [ "$REPLY" != "a" ]; then
-            return
-        fi
+        ask "edit list of links first?" && links_edit "$root" bins libs
     fi
 
-    local target
-    local -i n=${#dir}
-    local -i removed=0 kept=0 added=0 libs_added=0
+    # TODO: for debugging, remove ========>
+    local k
+    echo -en "$CYAN"
+    for k in "${!bins[@]}"; do printf "%-20s -> %s\n" "${bins[$k]}" "$k"; done
 
-    echo "updating linkes ..."
+    echo -en "$PINK"
+    for k in "${!libs[@]}"; do printf "%-20s -> %s\n" "${libs[$k]}" "$k"; done
 
-    # the two directories for symlinks should exist
-    [ -d "$BIN" ] || abort "directory [$BIN] does not exist"
-    [ -d "$LIB" ] || abort "directory [$LIB] does not exist"
-
-    # update links to executables
-    for key in $(ls $BIN); do
-        target=$(readlink $BIN/$key)
-        [ -z "$target" ] && continue
-        [ ${target::$n} != $dir ] && continue
-
-        if [ ${bins[$target]+_} ]; then
-            printf " %-20s %20s -> %s\n" "keep link" $key $target
-            bins[$target]="$key"
-            ((kept++))
-        else
-            printf " %-20s %20s -> %s\n" "remove dead link" $key $target
-            [ ! ${OPTS[debug]} ] && unlink "$BIN/$key"
-            ((removed++))
-        fi
-    done
-
-    for target in ${!bins[@]}; do
-        [ -n "${bins[$target]}" ] && continue
-        key=$(basename $target)
-
-        if [ -e "$BIN/$key" ]; then
-            printf " %-20s %20s -> %s\n" "skip - name used" $key $target
-        else
-            printf " %-20s %20s -> %s\n" "create link" $key $target
-            [ ! ${OPTS[debug]} ] && ln -s "$target" "$BIN/$key"
-            bins[$target]="$key"
-            ((added++))
-        fi
-    done
-
-    # update links to shared libs
-    # TODO: move to a function (almost exact same two loops)
-    for key in $(ls $LIB); do
-        target=$(readlink $LIB/$key)
-        [ -z "$target" ] && continue
-        [ ${target::$n} != $dir ] && continue
-
-        if [ ${libs[$target]+_} ]; then
-            printf " %-20s %20s -> %s\n" "keep link" $key $target
-            [ ! ${OPTS[debug]} ] && libs[$target]="$key"
-            ((kept++))
-        else
-            printf " %-20s %20s -> %s\n" "remove dead link" $key $target
-            [ ! ${OPTS[debug]} ] && unlink "$LIB/$key"
-            ((removed++))
-        fi
-    done
-
-    for target in ${!libs[@]}; do
-        [ -n "${libs[$target]}" ] && continue
-        key=$(basename $target)
-
-        if [ -e "$LIB/$key" ]; then
-            printf " %-20s %20s -> %s\n" "skip - name used" $key $target
-        else
-            printf " %-20s %20s -> %s\n" "create link" $key $target
-            [ ! ${OPTS[debug]} ] && ln -s "$target" "$LIB/$key"
-            libs[$target]="$key"
-            ((added++))
-            ((libs_added++))
-        fi
-    done
-    
-    # report results
-    echo "created $added, kept $kept, removed $removed links"
-    [ $libs_added -ne 0 ] && echo "run 'sudo ldconfig' to update cache"
-
-    # save metadata
-    if [ ${OPTS[debug]} ]; then
-        echo "in debug mode: nothing actually changed"
-    elif [ $added -ne 0 ] || [ $removed -ne 0 ]; then
-        md_dump_links "$1"
-        echo "updated metadata of package '$1'"
-    fi
-}
-
-# scan for executables in directory (arg).
-# the full path of executables is added either
-# to the AA 'bins' (if it's a binary or shell script) or
-# the AA 'libs' (if it's a shared library).
-#
-# if the 'recursive' option is set, runs recursively
-# in subdirectories.
-reflect_dir() {
-    local f p t
-    for f in $(ls $1); do
-        p="$1/$f"
-        [ -L "$p" ] && continue
-        [ -d "$p" ] && [ ${OPTS[recursive]} ] && reflect_dir "$p" && continue
-        [ -x "$p" ] || continue
-
-        t=$(file -b --mime-type "$p" | sed -E 's|.*-([a-z]+)$|\1|')
-        case "$t" in
-            shellscript | executable ) bins[$p]='' ;;
-            sharedlib )   libs[$p]='' ;;
-        esac
-    done
-}
-
-edit_lists() {
-    echo "'${FUNCNAME[0]}' not implemented yet"
-    return
-
-    # wip
-    local f
-    echo -e ":$PINK"
-    for f in "${bins[@]}"; do echo " - $f"; done;
     echo -e "$CLEAR"
+    ask 'continue ?' || exit
+    # ===================================>
 
-    echo ""
-    echo "you can choose to use all, none or edit the list"
-    read -p "[a]ll, [e]edit, [N]othing: "
 
-    if [ "${REPLY::1}" == "a" ]; then
-        ${md[bins]}=bins
-    elif [ "${REPLY::1}" == "e" ]; then
-        local tmpf="_tmp_smog_$1_bins.txt"
-        local ok
-        echo ${bins[@]} | tr ' ' '\n' > $tmpf
-        $EDITOR $tmpf
-        unset bins
-        readarray -t bins <<< $(cat $tmpf)
-        rm $tmpf
-        ${md[bins]}=bins
-    else
-        echo "stopping"
-        return
+    # --- Create links --- #
+    local -i added=0 removed=0 conflicts=0 skipped=0
+
+    printf "%b" $BOLD
+    printf "%-15s %-20% %s\n" 'Action' 'Linkname' 'Target'
+    printf "%b" $CLEAR
+   
+    # Clean up any dead links to 'root'
+    if [ -n "$update" ]; then
+        links_clean bins "$BIN" "$root"
+        links_clean libs "$LIB" "$root"
     fi
-}
 
+    # Create links
+    [ ${#bins[@]} -ne 0 ] && links_create bins "$BIN" "$p" && md_dump_links "$1" bins
+    [ ${#libs[@]} -ne 0 ] && links_create libs "$LIB" "$p" && md_dump_links "$1" libs
+    
+    # Report results
+    echo -e $BOLD
+    echo -n "$added created, $skipped skipped, "
+    echo "$removed removed, $conflicts conflicts."
+    echo -en $CLEAR
+
+    # TODO: maybe they know, so no need
+    [ ${#libs[@]} -ne 0 ] && echo "you can run 'sudo ldconfig' to update cache"
+
+    # Update metadata
+    md_dump_links "$1" bins
+    md_dump_links "$1" libs
+}
 
 # ---- main routine ---- #
 
@@ -654,7 +493,7 @@ while read -r lib; do
     . util/$lib || abort
     #echo "loaded '$lib'"
 done <<< $LIBS
-unset LIBS
+unset LIBS confp
 
 declare CMD ARG1 ARG2
 declare -A OPTS
@@ -673,7 +512,7 @@ case $CMD in
         ARG1=$2
         ARG2=$3
         shift 3 ;;
-    remove | show | path | update | reflect )
+    remove | show | path | update | link )
         [ -z $2 ] && abort "missing <PKG>"
         [ "${2:0:1}" == "-" ] && abort "invalid <PKG>"
         ARG1=$2
@@ -713,4 +552,4 @@ done
 #echo "CMD=[$CMD] - ARG1=[$ARG1] - ARG2=[$ARG2]"
 #echo -en "\033[0m"
 
-$CMD $ARG1 $ARG2
+_$CMD $ARG1 $ARG2
