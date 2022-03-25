@@ -94,17 +94,13 @@ _list() {
     local -A md
 
     if [ ! ${OPTS[no_header]} ]; then
-        printf "****************************** ******************** "
-        printf "**************************************************\n"
-        printf "%-30s %-20s %-50s\n" "package" "current head" "url"
-        printf "****************************** ******************** "
-        printf "**************************************************\n"
+        printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "url" $CLEA $CLEAR
     fi
 
     for pkg in $(md_list); do
         md=()
         md_load "$pkg"
-        printf "%-30s %-20s %-50s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
+        printf "%-30s %-20s %s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
     done
 }
 
@@ -116,9 +112,7 @@ _show() {
     md_load "$1" || abort "package '$1' does not exist"
 
     if [ ! ${OPTS[no_header]} ]; then
-        printf "****************************** **************************************************\n"
-        printf "package:                       %b%s%b\n" "$BOLD" "$1" "$CLEAR"
-        printf "****************************** **************************************************\n"
+        printf "%b%-30s %s%b\n" "$BOLD" "package" "$1" "$CLEAR"
     fi
 
     for key in ${!md[@]}; do printf "%-30s " "$key"; echo ${md[$key]}; done
@@ -139,24 +133,27 @@ _path() {
 _remove() {
     md_exists "$1" || abort "package '$1' does not exist"
     
-    local p=$(path "$1")
+    local p=$(_path "$1")
     [ -d "$p" ] || abort "invalid path: '$p'"
 
-	echo "warning: any local changes will be permanently lost"
+    echo "warning: any local changes will be permanently lost"
     ask "remove '$1'?" || exit
 
-    if md_has_links "$1"; then
+    if md_links_exist "$1"; then
         local -A bins libs
-        md_load_links "$1"
         echo "cleaning up symlinks.."
-        if [ ${#bins[@]} -ne 0 ]; then
+
+        if md_links_load "$1" bins; then
             links_remove bins "$BIN" "$p"
             links_clean bins "$BIN" "$p"
         fi
-        if [ ${#libs[@]} -ne 0 ]; then
+
+        if md_links_load "$1" libs; then
             links_remove libs "$LIB" "$p"
             links_clean libs "$LIB" "$p"
         fi
+
+        md_links_remove "$1"
     fi
 
     rm -rf "$p" || abort
@@ -175,9 +172,9 @@ _check() {
     url_parse "$url" || abort "failed to parse the URL"
 
     printf "\n"
-    printf "%-10s: %s\n" "package" "$pkg"
-    printf "%-10s: %s\n" "url" "$url"
-    printf "%-10s: %s\n" "path" "$path"
+    printf "%-10s %s\n" "package:" "$pkg"
+    printf "%-10s %s\n" "url:" "$url"
+    printf "%-10s %s\n" "path:" "$path"
     printf "\n"
 
     local -A refs
@@ -198,12 +195,12 @@ _add() {
     url_parse "$url" || abort "failed to parse the URL"
 
     printf "\n"
-    printf "%-10s: %s\n" "package" "$pkg"
-    printf "%-10s: %s\n" "url" "$url"
-    printf "%-10s: %s\n" "path" "$path"
+    printf "%-10s %s\n" "package:" "$pkg"
+    printf "%-10s %s\n" "url:" "$url"
+    printf "%-10s %s\n" "path:" "$path"
     printf "\n"
 
-    ask 'proceed?' || exit
+    ask 'proceed?' && echo || exit
 
     local -A md
     md[url]=$url
@@ -211,20 +208,21 @@ _add() {
     # Warn if URL used for another package
     local used=$(grep -rlE "^url: ${url}$" "$MDD/")
     if [ -n "$used" ]; then
-        echo "warning: URL already used by package '`basename $used`'"
-        ask 'continue anyway?' || exit
+        echo "URL already used by package '`basename $used`'"
+        # ask 'continue anyway?' || exit
+        # TODO: need to handle conflicting paths
+        abort
     fi
 
     # Check that pkg name is not already used. It's OK to
     # have two git repositories with the same name, but in
     # our metadata each package name should be unique.
     while md_exists "$pkg"; do
-        echo "package name already used"
+        echo -en "a package $BOLD'$pkg'$CLEAR already exists, "
         echo "you can use an alternative name"
         read -p "use name: " pkg
 		[ -n "$pkg" ] || abort
-		# update path with new name
-        path=$(echo "$path" | sed -E s|([^/])+$|"$pkg"|)
+        echo
     done
 
     md[path]="$PKG/$path"
@@ -255,6 +253,7 @@ _add() {
     # SHA only relevant for branches
     [ "$mode" == branch ] && md[sha]=${refs[$ref]}
 
+    echo
     echo -e "${BOLD}selected $mode [$ref] ${CLEAR}"
 
 	# Clone repo into the package's path
@@ -262,7 +261,7 @@ _add() {
 	cd "$PKG/$path"
 
 	echo -en "$GREY"
-	$GIT clone --depth=1 -c advice.detachedHead=false -b "$ref" "$url" .
+	$GIT clone --depth=1 -c advice.detachedHead=false -b "$ref" "$url" "$PKG/$path"
 	[ $? -ne 0 ] && rm -rf "$PKG/$path" && abort
 
 	$GIT checkout -b "${MASTERBRANCH}" 
@@ -279,11 +278,7 @@ _add() {
 _sync() {
 
     if [ ! ${OPTS[no_header]} ]; then
-        printf "****************************** ******************** "
-        printf "**************************************************\n"
-        printf "%-30s %-20s %s\n" "package" "current head" "status"
-        printf "****************************** ******************** "
-        printf "**************************************************\n"
+        printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "status" $CLEAR
     fi
 
     # Sync single package and exit
@@ -302,7 +297,6 @@ _sync() {
 # if the 'force' option is set, will try to merge any
 # local changes before merging.
 _update() {
-
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
 
@@ -326,8 +320,6 @@ _update() {
         * ) abort "$status" ;;
     esac
 
-    echo "ref = [$ref]"
-
     # If we get here, updates are available.
     # For branch mode, we just need to update local branch
     # For tag mode, multiple new tags ('releases') might
@@ -342,13 +334,13 @@ _update() {
     $GIT checkout -q "$MASTERBRANCH" || abort
 
     # Before fetching remote changes, make sure our
-    # local branch does not gave uncommitted commits.
+    # local branch does not have uncommitted commits.
     echo -n "checking local changes in '$MASTERBRANCH'.. "
     if [ -z "$($GIT status -s)" ]; then
         echo "OK: clean branch"
     else
         echo
-        echo "you have unstaged or uncommited changes"
+        echo "you have $($GIT status -s | wc -l) unstaged or uncommited changes"
         ask "create autocommit?" || abort
         echo -en "$GREY"
         # TODO: something better than 'add .'
@@ -388,6 +380,12 @@ _update() {
 _link() {
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
+    if [ -z "$BIN" ] && [ -z "$LIB" ]; then
+        echo 'variables $BIN and $LIB are not set in your config'
+        abort
+    fi
+
+    # --- Prepare --- #
 
     # Root directory of the package.
     local root="${md[path]}"
@@ -406,13 +404,24 @@ _link() {
     [ -d "$root/$dir" ] || abort "path '$root/$dir' does not exist"
     [ -L "$root/$dir" ] && abort "path '$root/$dir' is a symlink"
 
-
-    # --- Scan for targets --- #
-
-    # Each of these two AA's contains the target file as key
-    # and the linkname as value. Target file is the relative
+    # Each of these two AA's shall contain target file as
+    # key and linkname as value. Target file is the relative
     # path of the file in the 'root' directory.
     local -A bins libs
+
+    # If package already has links, mark our action as 'update'.
+    # This means we can expect that some links already exists
+    # and we will check for dead links.
+    local update
+    if md_links_exist "$1"; then
+        update=update
+        # Load existing links, otherwise we might try to
+        # re-create the same link (e.g. with different linkname)
+        [ -n "$BIN" ] && md_links_load "$1" bins
+        [ -n "$LIB" ] && md_links_load "$1" libs
+    fi
+
+    # --- Scan for targets --- #
 
     echo "scanning '$root/$dir'"
     links_scan bins libs "$root" "$dir" ${OPTS[recursive]-}
@@ -421,62 +430,85 @@ _link() {
     # if nothing detected, we're done here
     [ ${#bins[@]} -eq 0 ] && [ ${#libs[@]} -eq 0 ] && exit
 
-    # If package already has links, mark our action as 'update'.
-    # This means we can expect that some links already exists
-    # and we will check for dead links.
-    local update
-    md_has_links "$1" && update=update
-    ask "${update-create} symlinks?" || exit
-
-    # It's possible that we detect a lot of executables that
+    # It's possible that we detect a lot of executables
     # (e.g. build or test scripts) that would create garbage
     # symlinks, so give user option to filter the lists.
     if [ ${#bins[@]} -gt 1 ] || [ ${#libs[@]} -gt 1 ]; then
-        ask "edit list of links first?" && links_edit "$root" bins libs
+        ask "open list in editor?" && links_edit "$root" bins libs
     fi
 
-    # TODO: for debugging, remove ========>
-    local k
-    echo -en "$CYAN"
-    for k in "${!bins[@]}"; do printf "%-20s -> %s\n" "${bins[$k]}" "$k"; done
-
-    echo -en "$PINK"
-    for k in "${!libs[@]}"; do printf "%-20s -> %s\n" "${libs[$k]}" "$k"; done
-
-    echo -e "$CLEAR"
-    ask 'continue ?' || exit
-    # ===================================>
-
+    ask "${update-create} symlinks?" || exit
 
     # --- Create links --- #
-    local -i added=0 removed=0 conflicts=0 skipped=0
+    local -i created=0 cleaned=0 conflicts=0 skipped=0
 
-    printf "%b" $BOLD
-    printf "%-15s %-20% %s\n" 'Action' 'Linkname' 'Target'
+    printf "\n%b" $BOLD
+    printf "%-25s %-25s %s\n" 'Action' 'Linkname' 'Target'
     printf "%b" $CLEAR
-   
-    # Clean up any dead links to 'root'
-    if [ -n "$update" ]; then
-        links_clean bins "$BIN" "$root"
-        links_clean libs "$LIB" "$root"
-    fi
 
     # Create links
-    [ ${#bins[@]} -ne 0 ] && links_create bins "$BIN" "$p" && md_dump_links "$1" bins
-    [ ${#libs[@]} -ne 0 ] && links_create libs "$LIB" "$p" && md_dump_links "$1" libs
+    if [ ${#bins[@]} -ne 0 ]; then
+        if [ -z "$BIN" ]; then
+            echo 'variable $BIN not set, skipping executable targets'
+        else
+            [ -d "$BIN" ] || mkdir -vp "$BIN" || abort
+            [ -n "$update" ] && links_clean bins "$BIN" "$root"
+            links_create bins "$BIN" "$root"
+            md_links_dump "$1" bins > /dev/null
+       fi
+    fi
+
+    if [ ${#libs[@]} -ne 0 ]; then
+        if [ -z "$LIB" ]; then
+            echo 'variable $LIB not set, skipping sharedlibs'
+        else
+            [ -d "$LIB" ] || mkdir -vp "$LIB" || abort
+            [ -n "$update" ] && links_clean libs "$LIB" "$root"
+            links_create libs "$LIB" "$root"
+            md_links_dump "$1" libs > /dev/null
+        fi
+    fi
     
     # Report results
     echo -e $BOLD
-    echo -n "$added created, $skipped skipped, "
-    echo "$removed removed, $conflicts conflicts."
+    echo -n "$created created, $skipped skipped, "
+    echo "$cleaned cleaned, $conflicts conflicts."
     echo -en $CLEAR
 
-    # TODO: maybe they know, so no need
-    [ ${#libs[@]} -ne 0 ] && echo "you can run 'sudo ldconfig' to update cache"
-
     # Update metadata
-    md_dump_links "$1" bins
-    md_dump_links "$1" libs
+    md_links_dump "$1" bins
+    md_links_dump "$1" libs
+}
+
+_unlink() {
+
+    md_links_exist "$1" || abort "package '$1' has no links"
+
+    local p=$(_path "$1")
+    local -A bins libs
+    local -i removed=0 skipped=0 cleaned=0
+
+    printf "\n%b" $BOLD
+    printf "%-25s %-25s %s\n" 'Action' 'Linkname' 'Target'
+    printf "%b" $CLEAR
+   
+    if [ -n "$BIN" ] && md_links_load "$1" bins; then
+        links_remove bins "$BIN" "$p"
+        links_clean bins "$BIN" "$p"
+    fi
+
+    if [ -n "$LIB" ] && md_links_load "$1" libs; then
+        links_remove libs "$LIB" "$p"
+        links_clean libs "$LIB" "$p"
+    fi
+
+    # Report results
+    echo -e $BOLD
+    echo "$removed removed, $cleaned cleaned, $skipped skipped."
+    echo -en $CLEAR
+
+    # TODO: don't remove if links were not removed
+    md_links_remove "$1"
 }
 
 # ---- main routine ---- #
@@ -517,7 +549,7 @@ case $CMD in
         ARG1=$2
         ARG2=$3
         shift 3 ;;
-    remove | show | path | update | link )
+    remove | show | path | update | link | unlink )
         [ -z $2 ] && abort "missing <PKG>"
         [ "${2:0:1}" == "-" ] && abort "invalid <PKG>"
         ARG1=$2

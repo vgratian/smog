@@ -18,17 +18,18 @@ links_create() {
         # check link name does not exist
         if [ -f "$dest/$linkname" ]; then
             if [ "$(readlink $dest/$linkname)" == "$root/$target" ]; then
-                printf "%-10s %-25s %s\n" "<exists>" "$linkname" "$target"
-                ((kept++))
+                printf "%-25s %-25s %s\n" "skipped (exists)" "$linkname" "$target"
+                ((skipped++))
             else
-                printf "%-10s %-25s %s\n" "<conflict>" "$linkname" "$target"
-                ((conf++))
+                printf "%-25s %-25s %s\n" "skipped (conflic)" "$linkname" "$target"
+                ((conflicts++))
             fi
             continue
         fi
 
         ln -s "$root/$target" "$dest/$linkname" || abort
-        ((added++))
+        printf "%-25s %-25s %s\n" "created" "$linkname" "$target"
+        ((created++))
     done
 }
 
@@ -48,12 +49,12 @@ links_clean() {
         # ignore if link doesn't point to our root directory
         [ "${targetp::$n}" == "$root" ] || continue
         # relative target path
-        target=${targetp:$n}
+        target=${targetp:(($n+1))}
 
         if [ ! ${targets[$target]+_} ] && [ ! -f "$targetp" ] ; then
             unlink "$dest/$linkname"
-            printf "%-10s %-25s %s\n" "remove: deadlink" "$linkname" "$target"
-            ((removed++))
+            printf "%-25s %-25s %s\n" "cleaned (deadlink)" "$linkname" "$target"
+            ((cleaned++))
         fi
     done
 }
@@ -68,12 +69,14 @@ links_remove() {
         linkname="${targets[$target]}"
         [ -L "$dest/$linkname" ] || continue
         realtarget=$(readlink "$dest/$linkname")
-        if [ "$realtarget" == "$target" ]; then
+        if [ "$realtarget" == "$root/$target" ]; then
             unlink "$dest/$linkname"
             targets[$target]=
-            printf "%-10s %-25s %s\n" "removed" "$dest/$linkname" "$target"
+            printf "%-25s %-25s %s\n" "removed" "$linkname" "$target"
+            ((removed++))
         else
-            printf "%-10s %-25s %s\n" "skipped" "$dest/$linkname" "$target"
+            printf "%-25s %-25s %s\n" "skipped (not found)" "$linkname" "$target"
+            ((skipped++))
         fi
     done
 }
@@ -91,8 +94,6 @@ links_scan() {
     local -n ltargs=$2
     local r="$3" d="$4" rec="$5"
 
-    echo " --> root=[$r] dir=[$d] rec=[$rec]=(${#rec})"
-
     local fn fp type
 
     for fn in $( ls "$r/$d" ); do
@@ -104,7 +105,6 @@ links_scan() {
 
         # ignore directories
         if [ -d "$r/$fp" ]; then
-            echo "  -> rec? [$rec]"
             [ -n "$rec" ] && links_scan bins libs "$r" "$fp" "$rec"
             continue
         fi
@@ -116,11 +116,9 @@ links_scan() {
 
         case "$type" in
             shellscript | executable )
-                printf "    %-8s %-20s %s\n" "<bin>" "$fn" "$fp"
-                btargs[$fp]="$fn" ;;
+                [ ! ${btargs[$fp]+_} ] && btargs[$fp]="$fn" ;;
             sharedlib )
-                printf "    %-8s %-20s %s\n" "<lib>" "$fn" "$fp"
-                ltargs[$fp]="$fn" ;;
+                [ ! ${ltargs[$fp]+_} ] && ltargs[$fp]="$fn" ;;
         esac
     done
 }
@@ -163,7 +161,7 @@ EOF
         for k in "${!ltargs[@]}"; do echo "${ltargs[$k]} -> $k" >> "$fn"; done
     fi
 
-    echo "created temporary file '$fn'"
+    #echo "created temporary file '$fn'"
 
     $EDITOR "$fn"
 
@@ -187,5 +185,5 @@ EOF
         [ "$cur" == b ] && btargs["$x"]="$k" || ltargs["$x"]="$k"
     done < "$fn"
 
-    rm -v "$fn"
+    rm "$fn"
 }

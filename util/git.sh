@@ -17,8 +17,8 @@ list_refs() {
 
     [ $mode == tag ] && flags="-t --sort=version:refname" || flags="-h"
 
-	data=$( $GIT ls-remote $flags $url $prefer )
-    [ $? -eq 0 ] || return 1
+	data=$( $GIT ls-remote $flags $url $prefer ) || return $?
+    [ -n "$data" ] || return 0
 
     local sha refname
 
@@ -41,8 +41,8 @@ check_refs() {
 
     if [ $mode == tag ]; then
         [ "${OPTS[tag]}" ] && echo -n "checking matching tags.. " || \
-            echo -n "checking available tags.."
-        list_refs "$url" tag "${OPTS[tag]-}" || return 1
+            echo -n "checking available tags.. "
+        list_refs "$url" tag "${OPTS[tag]-}" || return $?
         echo "found ${#refs[@]}"
 
         if [ ${#refs[@]} -eq 0 ]; then
@@ -51,13 +51,14 @@ check_refs() {
 			ask "try branches?" || return 1
 			ref=
 			mode=branch
+            echo
         fi
     fi
 
     if [ $mode == branch ]; then
         [ "${OPTS[branch]}" ] && echo -n "checking matching branches.. " \
-            || -n echo "checking available branches.. "
-        list_refs "$url" branch "${OPTS[branch]-}"
+            || echo -n "checking available branches.. "
+        list_refs "$url" branch "${OPTS[branch]-}" || return $?
         echo "found ${#refs[@]}"
 
         [ ${#refs[@]} -eq 0 ] && return 1

@@ -43,7 +43,7 @@ sync_pkg() {
 sync_branch() {
     local url="$1" branch="$2" current_sha="$3"
 
-    list_git_refs "$url" branch "$branch" > /dev/null 2>&1
+    list_refs "$url" branch "$branch"
     if [ $? -ne 0 ]; then
         status="error: 'git ls-remote' failed"
         return 3
@@ -85,7 +85,7 @@ sync_tag() {
     local -a arr
     local found refname
 
-    list_git_refs "$url" tag > /dev/null 2>&1
+    list_refs "$url" tag 
     if [ $? -ne 0 ]; then
         status="error: 'git ls-remote' failed"
         return 3
