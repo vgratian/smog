@@ -34,6 +34,8 @@ Options:
     -b            Run in branch-mode
     -f            Force (don't ask anything to confirm)
     -r            Run recursively in all subdirectories (for 'link')
+    -m            When listing or syncing packages, show more details
+                  and decoratations
 
     -T  <TAG>     Use tag TAG only (valid for 'add' and 'update')
     -B  <BRANCH>  Use branch BRANCH (valid for 'add' and 'update')
@@ -81,75 +83,101 @@ ask() {
 # or confusion with bash commands.
 
 # List all packages. Print name, current head and URL.
-_list() {
+_listmore() {
     local pkg
     local -A md
 
-    if [ ! ${OPTS[no_header]+_} ]; then
-        printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "url" $CLEA $CLEAR
-    fi
+    printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "url" $CLEAR
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~ "
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
 
     for pkg in $(md_list); do
         md=()
         md_load "$pkg"
-        printf "%-30s %-20s %s\n" "$pkg" "${md[mode]} '${md[ref]}'" "${md[url]}"
+        printf "%-30s %b%6s%b %-13s %s\n" "$pkg" $GREY "${md[mode]}" $CLEAR \
+            "${md[ref]}" "${md[url]}"
     done
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~ "
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+    #printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+
+}
+
+_list() {
+    [ ${OPTS[more]+_} ] && _listmore || md_list
 }
 
 # Show all metadata fields of package
-_show() {
+_showmore() {
     local -A md
     local key
 
     md_load "$1" || abort "package '$1' does not exist"
 
-    if [ ! ${OPTS[no_header]+_} ]; then
-        printf "%b%-30s %s%b\n" "$BOLD" "package" "$1" "$CLEAR"
-    fi
+    printf "%b%-30s %s%b\n" "$BOLD" "package" "$1" "$CLEAR"
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ "
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
 
     for key in ${!md[@]}; do printf "%-30s " "$key"; echo ${md[$key]}; done
 
-    [ -f "$MDD/$1.bins" ] && printf "%-30s " "bins" && wc -l < "$MDD/$1.bins"
-    [ -f "$MDD/$1.libs" ] && printf "%-30s " "libs" && wc -l < "$MDD/$1.libs"
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ "
+    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+    #printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+}
+
+_show() {
+    [ ${OPTS[more]+_} ] && _showmore "$1" || cat "$ROOT/$MDD/$1"
 }
 
 # Print absolute path of package. Useful to quickly
 # change directory. E.g., run "cd `smog path PKG`".
 _path() {
     md_exists "$1" || abort "package '$1' does not exist"
-    grep '^path: ' "$MDD/$1" | cut -d' ' -f2-
+    # with '-m' print full path
+    [ ${OPTS[more]+_} ] && echo -n "$ROOT/$PKG/"
+    grep '^path: ' "$ROOT/$MDD/$1" | cut -d' ' -f2-
 }
 
 # Remove package. I.e. remove git repository, metadata and
 # symbolic links (if any).
 _remove() {
-    md_exists "$1" || abort "package '$1' does not exist"
-    
-    local p=$(_path "$1")
-    [ -d "$p" ] || abort "invalid path: '$p'"
 
-    echo "warning: any local changes will be permanently lost"
-    ask "remove '$1'?" || exit
+    local -A md
+    md_load "$1" || abort "package '$1' does not exist"
+   
+    local path="${md[path]}" 
+    [ -d "$ROOT/$PKG/$path" ] || abort "invalid path: '$path'"
+
+    if [ ! ${OPTS[force]+_} ]; then
+        echo "warning: any local changes will be permanently lost"
+        ask "remove '$1'?" || exit
+    fi
 
     if md_links_exist "$1"; then
-        local -A bins libs
+        local -A bin lib
         echo "cleaning up symlinks.."
 
         if md_links_load "$1" bins; then
-            links_remove bins "$BIN" "$p"
-            links_clean bins "$BIN" "$p"
+            links_remove bins "$BIN" "$path"
+            links_clean bins "$BIN" "$path"
         fi
 
         if md_links_load "$1" libs; then
-            links_remove libs "$LIB" "$p"
-            links_clean libs "$LIB" "$p"
+            links_remove libs "$LIB" "$path"
+            links_clean libs "$LIB" "$path"
         fi
 
         md_links_remove "$1"
     fi
 
-    rm -rf "$p" || abort
-	echo "removed repository '$p'"
+    rm -rf "$ROOT/$PKG/$path" || abort
+	echo "removed repository '$path'"
+    while true; do
+        path=$( dirname "$path")
+        [ -z "$path" ] || [ "$path" == "." ] && break
+        [ $( ls -A "$ROOT/$PKG/$path" | wc -l ) -ne 0 ] && break
+        rm -vd "$ROOT/$PKG/$path" || abort
+    done
 
     md_remove "$1"
     echo -e "${BOLD}package '$1' removed${CLEAR}"
@@ -192,13 +220,15 @@ _add() {
     printf "%-10s %s\n" "path:" "$path"
     printf "\n"
 
-    [ ${OPTS[force]+_} ] || ask 'proceed?' && echo || exit
+    if [ ! ${OPTS[force]+_} ]; then
+        ask 'proceed?' && echo || exit
+    fi
 
     local -A md
     md[url]=$url
 
     # Warn if URL used for another package
-    local used=$(grep -rlE "^url: ${url}$" "$MDD/")
+    local used=$(grep -rlE "^url: ${url}$" "$ROOT/$MDD/")
     if [ -n "$used" ]; then
         echo "URL already used by package '`basename $used`'"
         # ask 'continue anyway?' || exit
@@ -217,7 +247,7 @@ _add() {
         echo
     done
 
-    md[path]="$PKG/$path"
+    md[path]="$path"
 
 	# check available tags/branches and which
 	# ref we will use to clone the repo
@@ -225,7 +255,7 @@ _add() {
 	local -a refsarr
     local mode ref refname sha
 
-	check_refs
+	check_refs || abort
 
     # ask to confirm selected tag/branch (if any)
     if [ -n "$ref" ] && [ "$ref" != "${OPTS[$mode]}" ]; then
@@ -233,6 +263,7 @@ _add() {
     fi
 
     # ask to choose tag/branch if nothing is selected
+    # TODO: don't ask if 1 ref and user already declined
     if [ -z "$ref" ]; then
         echo "choose $mode to clone"
         select ref in "${refsarr[@]}"; do break; done
@@ -249,15 +280,15 @@ _add() {
     echo -e "${BOLD}selected $mode [$ref] ${CLEAR}"
 
 	# Clone repo into the package's path
-	mkdir -vp "$PKG/$path" || abort
-	cd "$PKG/$path"
+	mkdir -vp "$ROOT/$PKG/$path" || abort
+	cd "$ROOT/$PKG/$path"
 
 	echo -en "$GREY"
-	$GIT clone --depth=1 -c advice.detachedHead=false -b "$ref" "$url" "$PKG/$path"
-	[ $? -ne 0 ] && rm -rf "$PKG/$path" && abort
+	$GIT clone --depth=1 -c advice.detachedHead=false -b "$ref" "$url" "$ROOT/$PKG/$path"
+	[ $? -ne 0 ] && rm -rf "$ROOT/$PKG/$path" && abort
 
 	$GIT checkout -b "${MASTERBRANCH}" 
-	[ $? -ne 0 ] && rm -rf "$PKG/$path" && abort
+	[ $? -ne 0 ] && rm -rf "$ROOT/$PKG/$path" && abort
 	echo -en "$CLEAR"
 
     md_dump "$pkg"
@@ -269,7 +300,7 @@ _add() {
 # When all packages are synced, this function calls itself concurrently.
 _sync() {
 
-    if [ ! ${OPTS[no_header]+_} ]; then
+    if [ ${OPTS[more]+_} ] && [ ! ${OPTS[no_header]+_} ]; then
         printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "status" $CLEAR
     fi
 
@@ -278,9 +309,10 @@ _sync() {
 
     # Sync all packages - run 'smog PKG -n' for each package
     # (-n will prevent printing header each time)
-    md_list | xargs -P ${NPROCS} -I {} $0 sync {} -n
+    [ ${OPTS[more]+_} ] && flags="-nm" || flags="-n"
+    md_list | xargs -P ${NPROCS} -I {} $0 sync "$flags" {}
     wait
-    printf "\nsyncing complete!\n"
+    [ ${OPTS[more]+_} ] && printf "\nsyncing complete!\n"
 }
 
 # updates a package repository:
@@ -541,7 +573,7 @@ shift
 #   - anything else (at any position) is argument to CMD
 declare opt arg buf
 
-while test $# -gt 0; do
+while [ $# -gt 0 ]; do
 
     # --- parse option --- #
     opt=
@@ -572,6 +604,7 @@ while test $# -gt 0; do
         n ) OPTS[no_header]= ;;
         r ) OPTS[recurse]= ;;
         f ) OPTS[force]= ;;
+        m ) OPTS[more]= ;;
         T ) [ -n "$arg" ] && OPTS[tag]="$arg" ||    abort "option '-$opt' requires argument" ;;
         B ) [ -n "$arg" ] && OPTS[branch]="$arg" || abort "option '-$opt' requires argument" ;;
         R ) [ -n "$arg" ] && OPTS[root]="$arg" ||   abort "option '-$opt' requires argument" ;;

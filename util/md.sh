@@ -8,17 +8,17 @@
 
 # Test if package metadata file exist
 md_exists() {
-    test -f "$MDD/$1"
+    test -f "$ROOT/$MDD/$1"
 }
 
 # List names of all packages
 md_list() {
-    ls "$MDD" | grep -vE '\.(libs)|(bins)$'
+    ls "$ROOT/$MDD" | grep -vE '\.(libs)|(bins)$'
 }
 
 # Remove package metadata
 md_remove() {
-    rm -v "$MDD/$1"
+    rm -v "$ROOT/$MDD/$1"
 }
 
 # Read package metadata and store into the AA 'md'
@@ -29,14 +29,14 @@ md_load() {
     
     while IFS=': ' read -r key val; do
         md[$key]="$val"
-    done < "$MDD/$1"
+    done < "$ROOT/$MDD/$1"
 }
 
 # Save key-value pairs of the AA 'md' into package
 # metadata. Overwrites file if it exists.
 md_dump() {
     local action='created'
-    local key fp="$MDD/$1"
+    local key fp="$ROOT/$MDD/$1"
 
     md_exists "$1" && md_remove "$1" && action='updated'
     touch "$fp" || return 1
@@ -51,12 +51,12 @@ md_dump() {
 
 # Check if pkg has symlink metadata
 md_links_exist() {
-    [ -f "$MDD/$1".bins ] || [ -f "$MDD/$1".libs ]
+    [ -f "$ROOT/$MDD/$1".bin ] || [ -f "$ROOT/$MDD/$1".lib ]
 }
 
 # Remove symlink metadata
 md_links_remove() {
-    rm -vf "$MDD/$1"{.bins,.libs}
+    rm -vf "$ROOT/$MDD/$1"{.bin,.lib}
 }
 
 # Read links metadata and store into the named AA.
@@ -68,11 +68,11 @@ md_links_load() {
     local -n targs=$2
     local key val
 
-    [ -f "$MDD/$1.$2" ] || return 1
+    [ -f "$ROOT/$MDD/$1.$2" ] || return 1
 
     while IFS=': ' read -r key val; do
         targs[$val]="$key"
-    done < "$MDD/$1.$2"
+    done < "$ROOT/$MDD/$1.$2"
 }
 
 # Store contents of the named AA into a metadata file.
@@ -81,7 +81,7 @@ md_links_load() {
 # NOTE: reverse order of key/values as above.
 md_links_dump() {
     local -n targs=$2
-    local key fp="$MDD/$1.$2" action='created'
+    local key fp="$ROOT/$MDD/$1.$2" action='created'
 
     [ -f "$fp" ] && rm "$fp" && action='updated'
 

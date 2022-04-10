@@ -25,7 +25,12 @@ sync_pkg() {
         * ) color=$RED ;;
     esac
 
-    printf "%b%-30s %-20s %-50s%b\n" $color "$1" "${md[mode]} '${md[ref]}'" "$status" $CLEAR
+    if [ ${OPTS[more]+_} ]; then
+        printf "%b%-30s %-20s %-50s%b\n" $color "$1" \
+            "${md[mode]} '${md[ref]}'" "$status" $CLEAR
+    elif [ "$color" == "$BOLD" ]; then
+        echo "$1"
+    fi
 }
 
 # Check for new commits on remote branch. Returns:
