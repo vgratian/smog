@@ -37,17 +37,17 @@ check_refs() {
     # A repo can be cloned either using a tag or a branch as ref.
     # If user has no preference, we will check tags first.
     mode=${OPTS[mode]-tag}
-    [ ${OPTS[branch]} ] && mode=branch
+    [ ${OPTS[branch]+_} ] && mode=branch
 
     if [ $mode == tag ]; then
-        [ "${OPTS[tag]}" ] && echo -n "checking matching tags.. " || \
+        [ ${OPTS[tag]+_} ] && echo -n "checking matching tags.. " || \
             echo -n "checking available tags.. "
         list_refs "$url" tag "${OPTS[tag]-}" || return $?
         echo "found ${#refs[@]}"
 
         if [ ${#refs[@]} -eq 0 ]; then
             # Abort if user explicitely asked for tags
-            [ ${OPTS[mode]} ] || [ ${OPTS[tag]} ] && return 1
+            [ ${OPTS[mode]+_} ] || [ ${OPTS[tag]+_} ] && return 1
 			ask "try branches?" || return 1
 			ref=
 			mode=branch
@@ -56,7 +56,7 @@ check_refs() {
     fi
 
     if [ $mode == branch ]; then
-        [ "${OPTS[branch]}" ] && echo -n "checking matching branches.. " \
+        [ ${OPTS[branch]+_} ] && echo -n "checking matching branches.. " \
             || echo -n "checking available branches.. "
         list_refs "$url" branch "${OPTS[branch]-}" || return $?
         echo "found ${#refs[@]}"
@@ -65,7 +65,7 @@ check_refs() {
 
         # Mark 'master' or 'main' as preferred branch, unless
         # the '-B' flag was provided with a branch name.
-        if [ ! "${OPTS[branch]}" ]; then
+        if [ ! ${OPTS[branch]+_} ]; then
             ref=
             [ ${refs[main]} ] && ref=main
             [ ${refs[master]} ] && ref=master

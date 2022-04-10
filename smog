@@ -7,65 +7,57 @@ version() {
     echo "${NAME} v${VERSION}"
 }
 
+
+#TODO move details to README
 usage() {
-    echo "
-Usage: ${NAME} COMMAND [ARG] [OPTION...]
+    cat << EOF
+Usage: ${NAME} COMMAND [OPTS.. ARGS..]
 
 Commands:
-    add <URL>     Clone and create new package from URL (expectedly
-                  pointing to a git-repository). See more in 'Modes'.
-    remove <PKG>  Remove PKG and all of its files.
-    show <PKG>    Show metadata of PKG.
-    path <PKG>    Print absolure path of PKG directory.
-    reflect <PKG> Scan for executables in repository and create
-                  symlinks.
+    list          List all local packages
+    add <URL>     Create new package from a git URL
+    remove <PKG>  Remove PKG and all of its files
+    show <PKG>    Show PKG metadata
+    path <PKG>    Print absolute path of local repository
+    sync [<PKG>]  Sync PKG (or *all* packages with no argument),
+                  i.e. check for updates in the remote repository
     update <PKG>  Update package PKG, see 'Modes' for details.
+    link <PKG>    Create symlinks for binaries and libs in the
+                  local repostory
+    unlink <PKG>  Remove and clean-up symlinks
 
-    sync [<PKG>]  Sync package PKG (or all packages with no argument),
-                  i.e. check for available updates.
-
-    list          List packages.
-
-    set <PKG> KEY[=VAL]
-                  Set metadata value of KEY to VAL (without VAL,
-                  show current value).
+    version       Print version and exit
+    help          Print this message
 
 Options:
-    options for 'add':
-        -t        Add package in tag-mode
-        -b        Add package in branch-mode
-        -u        Force using URL as is
+    -t            Run in tag-mode (normally the default)
+    -b            Run in branch-mode
+    -f            Force (don't ask anything to confirm)
+    -r            Run recursively in all subdirectories (for 'link')
 
-    options for 'add' and 'reflect':
-        -d        Dry-run, don't download or create files
-
-    options for 'reflect':
-        -r <DIR>  Use subdirectory DIR instead of root directory
-        -R        Scan directories recursively, not just root directory
-
-    options for 'update':
-        -f        Don't stop on uncommitted changes and don't ask to
-                  select tag if more than one tag are available.
+    -T  <TAG>     Use tag TAG only (valid for 'add' and 'update')
+    -B  <BRANCH>  Use branch BRANCH (valid for 'add' and 'update')
+    -R  <DIR>     Scan DIR instead of root directory of package (for 'link')
 
 Modes:
-    Packages are added and updated in one of the two modes:
+    Smog links each local package to a remote git "ref", this is either
+    a tag or branch, hence the two modes.
 
-    tag-mode      Local repository is cloned using a tag reference.
-                  In this mode, when you update a package, we search
-                  for a tag that is more recent than the current one,
-                  and merge the local working branch.
+    * tag mode *
+    A package is created by cloning a git tag. When updating, 
+    Smog searches for a tag that is more recent than the local
+    one and merges your local branch to the new tag.
+    This is always the preferred mode.
 
-                  When the attribute 'tag_pattern' is set, only tags
-                  matching this pattern are considered.
+    * Branch-mode *
+    A package is created by cloning a git branch. When updating,
+    Smog checks for new commits on the remote branch and merges
+    those to your local branch.
 
-    branch-mode   Local repository is cloned using a branch reference
-                  (often master/main). Package is updated by merging
-                  last commits into the local working branch.
-
-    The \"local working branch\" is created when a repository is cloned,
-    (useful if you like to mess with the source code). The name of this
-    branch is defined in the config file.
-    "
+    In both cases, Smog always creates a *local working branch*,
+    which will contain your local changes, and the original branch
+    or tag will be kept clean.
+EOF
 }
 
 
@@ -93,7 +85,7 @@ _list() {
     local pkg
     local -A md
 
-    if [ ! ${OPTS[no_header]} ]; then
+    if [ ! ${OPTS[no_header]+_} ]; then
         printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "url" $CLEA $CLEAR
     fi
 
@@ -111,7 +103,7 @@ _show() {
 
     md_load "$1" || abort "package '$1' does not exist"
 
-    if [ ! ${OPTS[no_header]} ]; then
+    if [ ! ${OPTS[no_header]+_} ]; then
         printf "%b%-30s %s%b\n" "$BOLD" "package" "$1" "$CLEAR"
     fi
 
@@ -200,7 +192,7 @@ _add() {
     printf "%-10s %s\n" "path:" "$path"
     printf "\n"
 
-    ask 'proceed?' && echo || exit
+    [ ${OPTS[force]+_} ] || ask 'proceed?' && echo || exit
 
     local -A md
     md[url]=$url
@@ -277,7 +269,7 @@ _add() {
 # When all packages are synced, this function calls itself concurrently.
 _sync() {
 
-    if [ ! ${OPTS[no_header]} ]; then
+    if [ ! ${OPTS[no_header]+_} ]; then
         printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "status" $CLEAR
     fi
 
@@ -424,7 +416,7 @@ _link() {
     # --- Scan for targets --- #
 
     echo "scanning '$root/$dir'"
-    links_scan bins libs "$root" "$dir" ${OPTS[recursive]-}
+    links_scan bins libs "$root" "$dir" ${OPTS[recurse]-}
     echo "detected ${#bins[@]} executables and ${#libs[@]} libraries"
 
     # if nothing detected, we're done here
@@ -511,82 +503,97 @@ _unlink() {
     md_links_remove "$1"
 }
 
+
 # ---- main routine ---- #
 
-# DEBUG
-#echo -en "\033[90m"
+# reject to run as root user
+[ "$UID" -eq 0 ] && abort "please don't run $NAME as root"
 
-# figure out home directory and load config
+# figure out home directory and import config
 [ -L "$0" ] && confp=$(dirname $(readlink $0))/config.sh || confp=$(dirname $0)/config.sh
-. $confp || abort "can't load '$confp'"
+[ -e "$confp" ] || abort "can't find '$confp'"
+. $confp || abort
 
 # TODO: remove cd && use $SMOG_PATH
 cd `dirname $confp`
 
-declare LIBS
-LIBS=$(ls util) || abort
+declare UTIL=(color md url git sync link)
+for u in ${UTIL[@]}; do
+    . util/$u.sh || abort
+done
+unset UTIL confp
 
-while read -r lib; do
-    . util/$lib || abort
-    #echo "loaded '$lib'"
-done <<< $LIBS
-unset LIBS confp
-
-declare CMD ARG1 ARG2
-declare -A OPTS
-
-CMD=$1
-
-case $CMD in
-    add | check )
-        [ -z $2 ] && abort "missing <URL>"
-        [ "${2:0:1}" == "-" ] && abort "invalid <URL>"
-        ARG1=$2
-        shift 2 ;;
-    set )
-        [ -z $2 ] && abort "missing <PKG>"
-        [ -z "$3" ] && abort "missing <KEY>"
-        ARG1=$2
-        ARG2=$3
-        shift 3 ;;
-    remove | show | path | update | link | unlink )
-        [ -z $2 ] && abort "missing <PKG>"
-        [ "${2:0:1}" == "-" ] && abort "invalid <PKG>"
-        ARG1=$2
-        shift 2 ;;
-    sync )
-        [ -n "$2" ] && [ "${2:0:1}" != "-" ] && { ARG1=$2; shift 2; } || shift 1 ;;
-    list )
-        shift 1 ;;
-    help | -h | --help )
-        usage
-        exit 0 ;;
-    version )
-        version
-        exit 0 ;;
-    * )
-        [ -z $CMD ] && abort "missing command"
-        abort "invalid command '$CMD'" ;;
+case $1 in
+    -h | --help | help ) usage && exit 0 ;;
+    -v | --version | version ) version && exit 0 ;;
+    * ) [ -z "$1" ] && usage && abort 'missing command' ;;
 esac
 
-while getopts 'vdtbnrfuR:T:B:' opt; do
+declare -a ARGS
+declare -A OPTS
+declare CMD=$1
+shift
+
+# it would have been easier to use getopts, but we need more flexibility
+# rules are:
+#   - boolean options are lowercased and can be combined (e.g. '-ft')
+#   - options with argument are uppercased, can be only combined as last option (e.g. '-fB master')
+#   - anything else (at any position) is argument to CMD
+declare opt arg buf
+
+while test $# -gt 0; do
+
+    # --- parse option --- #
+    opt=
+    arg=
+    [ -z "$buf" ] && buf="$1"
+
+    if [ "${buf::1}" == - ]; then
+        opt="${buf:1:1}"
+        if [ -n "${buf:2}" ]; then
+            buf="-${buf:2}"
+        else
+            [ "$buf" == "${buf^^}" ] && shift && arg="$1"
+            shift
+            buf=
+        fi
+    else
+        arg="$buf"
+        buf=
+        shift
+    fi
+
+    # --- handle option --- #
+    [ -z "$opt" ] && ARGS+=($arg) && continue
+
     case $opt in
-        v ) OPTS[verbose]=true ;;
-        d ) OPTS[debug]=true ;;
         t ) OPTS[mode]=tag ;;
         b ) OPTS[mode]=branch ;;
-        n ) OPTS[no_header]=true ;;
-        r ) OPTS[recursive]=true ;;
-        f ) OPTS[force]=true ;;
-        u ) OPTS[url]=true ;;
-        R ) OPTS[root]="$OPTARG" ;;
-		T ) OPTS[tag]="$OPTARG" ;;
-		B ) OPTS[branch]="$OPTARG" ;;
-        ? ) abort ;;
+        n ) OPTS[no_header]= ;;
+        r ) OPTS[recurse]= ;;
+        f ) OPTS[force]= ;;
+        T ) [ -n "$arg" ] && OPTS[tag]="$arg" ||    abort "option '-$opt' requires argument" ;;
+        B ) [ -n "$arg" ] && OPTS[branch]="$arg" || abort "option '-$opt' requires argument" ;;
+        R ) [ -n "$arg" ] && OPTS[root]="$arg" ||   abort "option '-$opt' requires argument" ;;
+        * ) abort "invalid option '-$opt'"
     esac
 done
 
-#echo "CMD=[$CMD] - ARG1=[$ARG1] - ARG2=[$ARG2]"
-#echo -en "\033[0m"
+unset opt arg buf
 
-_$CMD $ARG1 $ARG2
+# check that command has required number of arguments
+case $CMD in
+    add | check )
+        [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <URL>" ;;
+    remove | show | path | update | link | unlink )
+        [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <PKG>" ;;
+    sync )
+        [ ! ${#ARGS[@]} -le 1 ] && abort "$CMD: has optional argument <PKG>" ;;
+    list )
+        [ ${#ARGS[@]} -ne 0 ] && abort "$CMD: requires no argument" ;;
+    set )
+        [ ${#ARGS[@]} -ne 2 ] && abort "$CMD: requires 2 arguments <PKG> <KEY>" ;;
+    * ) abort "invalid command '$CMD'" ;;
+esac
+
+_$CMD "${ARGS[@]}"
