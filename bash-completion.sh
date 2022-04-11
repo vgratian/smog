@@ -2,7 +2,7 @@
 
 _smog_complete() {
 
-    local -a all_commands=(add check list help version)
+    local -a all_commands
     local -a pkg_commands
     local cmd smog
     all_commands=(add check list help version)

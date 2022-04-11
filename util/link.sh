@@ -82,18 +82,13 @@ links_remove() {
 }
 
 # Scan for binaries, shell scripts and sharedlibs. 
-# Mark them as targets and create a link name.
+# Mark them as targets and add to the AAs bin and lib.
 # Args:
-#   $1 - AA where we put executable targets
-#   $2 - AA where we put shared lib targets
-#   $3 - Root directory to scan
-#   $4 - Subdirectory (always empty if non-recursive)
-#   $5 - If not empty, run recursively in subdirectories
+#   $1 - Root directory to scan
+#   $2 - Subdirectory (always empty if non-recursive)
+#   $3 - If not empty, run recursively in subdirectories
 links_scan() {
-    local -n btargs=$1
-    local -n ltargs=$2
-    local r="$3" d="$4" rec="$5"
-
+    local r="$1" d="$2" rec="$3"
     local fn fp type
 
     for fn in $( ls "$r/$d" ); do
@@ -105,7 +100,7 @@ links_scan() {
 
         # ignore directories
         if [ -d "$r/$fp" ]; then
-            [ -n "$rec" ] && links_scan bins libs "$r" "$fp" "$rec"
+            [ -n "$rec" ] && links_scan "$r" "$fp" "$rec"
             continue
         fi
 
@@ -116,9 +111,9 @@ links_scan() {
 
         case "$type" in
             shellscript | executable )
-                [ ! ${btargs[$fp]+_} ] && btargs[$fp]="$fn" ;;
+                [ ! ${bin[$fp]+_} ] && bin[$fp]="$fn" ;;
             sharedlib )
-                [ ! ${ltargs[$fp]+_} ] && ltargs[$fp]="$fn" ;;
+                [ ! ${lib[$fp]+_} ] && lib[$fp]="$fn" ;;
         esac
     done
 }

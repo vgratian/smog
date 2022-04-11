@@ -82,7 +82,7 @@ ask() {
 # prefixed with '_' to avoid collision
 # or confusion with bash commands.
 
-# List all packages. Print name, current head and URL.
+# Decorated list of packages. Print name, current head and URL.
 _listmore() {
     local pkg
     local -A md
@@ -99,15 +99,15 @@ _listmore() {
     done
     printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~ "
     printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-    #printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
 
 }
 
+# Raw list of packages
 _list() {
     [ ${OPTS[more]+_} ] && _listmore || md_list
 }
 
-# Show all metadata fields of package
+# Show decorated metadata of package
 _showmore() {
     local -A md
     local key
@@ -122,15 +122,21 @@ _showmore() {
 
     printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ "
     printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-    #printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+
+    # number of symlinks
+    printf "%b" $GREY
+    printf "%-30s %d bins and %d libs\n" "links" \
+        $( cat "$ROOT/$MDD/$1"{.bin,.lib} 2> /dev/null | wc -l )
+    printf "%b" $CLEAR
 }
 
+# Show raw metadata of package
 _show() {
     [ ${OPTS[more]+_} ] && _showmore "$1" || cat "$ROOT/$MDD/$1"
 }
 
-# Print absolute path of package. Useful to quickly
-# change directory. E.g., run "cd `smog path PKG`".
+# Print path of local repository. Useful to quickly
+# change directory. E.g., run "cd `smog path -m PKG`".
 _path() {
     md_exists "$1" || abort "package '$1' does not exist"
     # with '-m' print full path
@@ -138,15 +144,15 @@ _path() {
     grep '^path: ' "$ROOT/$MDD/$1" | cut -d' ' -f2-
 }
 
-# Remove package. I.e. remove git repository, metadata and
-# symbolic links (if any).
+# Remove package, i.e. remove local repository, metadata file
+# and symbolic links (if any).
 _remove() {
 
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
    
     local path="${md[path]}" 
-    [ -d "$ROOT/$PKG/$path" ] || abort "invalid path: '$path'"
+    [ -d "$ROOT/$PKG/$path" ] || abort "invalid path '$path'"
 
     if [ ! ${OPTS[force]+_} ]; then
         echo "warning: any local changes will be permanently lost"
@@ -157,14 +163,14 @@ _remove() {
         local -A bin lib
         echo "cleaning up symlinks.."
 
-        if md_links_load "$1" bins; then
-            links_remove bins "$BIN" "$path"
-            links_clean bins "$BIN" "$path"
+        if md_links_load "$1" bin; then
+            links_remove bin "$BIN" "$path"
+            links_clean bin "$BIN" "$path"
         fi
 
-        if md_links_load "$1" libs; then
-            links_remove libs "$LIB" "$path"
-            links_clean libs "$LIB" "$path"
+        if md_links_load "$1" lib; then
+            links_remove lib "$LIB" "$path"
+            links_clean lib "$LIB" "$path"
         fi
 
         md_links_remove "$1"
@@ -172,8 +178,9 @@ _remove() {
 
     rm -rf "$ROOT/$PKG/$path" || abort
 	echo "removed repository '$path'"
-    while true; do
-        path=$( dirname "$path")
+
+    # remove empty parent directories
+    while path=$( dirname "$path"); do
         [ -z "$path" ] || [ "$path" == "." ] && break
         [ $( ls -A "$ROOT/$PKG/$path" | wc -l ) -ne 0 ] && break
         rm -vd "$ROOT/$PKG/$path" || abort
@@ -207,7 +214,7 @@ _check() {
 }
 
 # Add a repository, i.e. check for available refs (tags or branches),
-# clone the repository and create a metadata file.
+# then clone the repository and create metadata file.
 _add() {
 
     local pkg path url="$1"
@@ -354,7 +361,7 @@ _update() {
 
     # Enter package directory
     echo "entering directory '${md[path]}'"
-    cd "${md[path]}" || abort
+    cd "$ROOT/$PKG/${md[path]}" || abort
     $GIT checkout -q "$MASTERBRANCH" || abort
 
     # Before fetching remote changes, make sure our
@@ -404,15 +411,16 @@ _update() {
 _link() {
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
+
     if [ -z "$BIN" ] && [ -z "$LIB" ]; then
-        echo 'variables $BIN and $LIB are not set in your config'
+        echo 'variables $BIN and $LIB not set in config'
         abort
     fi
 
     # --- Prepare --- #
 
     # Root directory of the package.
-    local root="${md[path]}"
+    local path="$ROOT/$PKG/${md[path]}"
 
     # User flag '-R' or metadata field 'builddir' tell
     # us to scan only a subdirectory.
@@ -425,71 +433,74 @@ _link() {
     [ "${dir: -1}" == / ] && dir="${dir::-1}" # strip trailing '/'
 
     # sanity check
-    [ -d "$root/$dir" ] || abort "path '$root/$dir' does not exist"
-    [ -L "$root/$dir" ] && abort "path '$root/$dir' is a symlink"
+    [ -d "$path/$dir" ] || abort "path '$path/$dir' does not exist"
+    [ -L "$path/$dir" ] && abort "path '$path/$dir' is a symlink"
 
     # Each of these two AA's shall contain target file as
     # key and linkname as value. Target file is the relative
     # path of the file in the 'root' directory.
-    local -A bins libs
+    local -A bin lib
 
     # If package already has links, mark our action as 'update'.
     # This means we can expect that some links already exists
     # and we will check for dead links.
-    local update
+    local update recursive
     if md_links_exist "$1"; then
         update=update
         # Load existing links, otherwise we might try to
         # re-create the same link (e.g. with different linkname)
-        [ -n "$BIN" ] && md_links_load "$1" bins
-        [ -n "$LIB" ] && md_links_load "$1" libs
+        [ -n "$BIN" ] && md_links_load "$1" bin
+        [ -n "$LIB" ] && md_links_load "$1" lib
     fi
 
     # --- Scan for targets --- #
 
-    echo "scanning '$root/$dir'"
-    links_scan bins libs "$root" "$dir" ${OPTS[recurse]-}
-    echo "detected ${#bins[@]} executables and ${#libs[@]} libraries"
+    echo "scanning '$path/$dir'"
+    [ ${OPTS[recurse]+_} ] && recursive=r
+    links_scan "$path" "$dir" $recursive
+    echo "detected ${#bin[@]} executables and ${#lib[@]} libraries"
 
     # if nothing detected, we're done here
-    [ ${#bins[@]} -eq 0 ] && [ ${#libs[@]} -eq 0 ] && exit
+    [ ${#bin[@]} -eq 0 ] && [ ${#lib[@]} -eq 0 ] && exit
 
     # It's possible that we detect a lot of executables
     # (e.g. build or test scripts) that would create garbage
     # symlinks, so give user option to filter the lists.
-    if [ ${#bins[@]} -gt 1 ] || [ ${#libs[@]} -gt 1 ]; then
-        ask "open list in editor?" && links_edit "$root" bins libs
+    if [ ${#bin[@]} -gt 1 ] || [ ${#lib[@]} -gt 1 ]; then
+        ask "open list in editor?" && links_edit "$path" bin lib
     fi
 
     ask "${update-create} symlinks?" || exit
 
     # --- Create links --- #
+
     local -i created=0 cleaned=0 conflicts=0 skipped=0
 
     printf "\n%b" $BOLD
     printf "%-25s %-25s %s\n" 'Action' 'Linkname' 'Target'
     printf "%b" $CLEAR
 
-    # Create links
-    if [ ${#bins[@]} -ne 0 ]; then
+    # create links for executables
+    if [ ${#bin[@]} -ne 0 ]; then
         if [ -z "$BIN" ]; then
             echo 'variable $BIN not set, skipping executable targets'
         else
-            [ -d "$BIN" ] || mkdir -vp "$BIN" || abort
-            [ -n "$update" ] && links_clean bins "$BIN" "$root"
-            links_create bins "$BIN" "$root"
-            md_links_dump "$1" bins > /dev/null
+            [ -d "$ROOT/$BIN" ] || abort "directory '$ROOT/$BIN' does not exist"
+            [ -n "$update" ] && links_clean bin "$ROOT/$BIN" "$path"
+            links_create bin "$ROOT/$BIN" "$path"
+            md_links_dump "$1" bin > /dev/null
        fi
     fi
 
-    if [ ${#libs[@]} -ne 0 ]; then
+    # create links for sharedlibs
+    if [ ${#lib[@]} -ne 0 ]; then
         if [ -z "$LIB" ]; then
             echo 'variable $LIB not set, skipping sharedlibs'
         else
-            [ -d "$LIB" ] || mkdir -vp "$LIB" || abort
-            [ -n "$update" ] && links_clean libs "$LIB" "$root"
-            links_create libs "$LIB" "$root"
-            md_links_dump "$1" libs > /dev/null
+            [ -d "$ROOT/$LIB" ] || abort "directory '$ROOT/$LIB' does not exist"
+            [ -n "$update" ] && links_clean lib "$ROOT/$LIB" "$path"
+            links_create lib "$ROOT/$LIB" "$path"
+            md_links_dump "$1" lib > /dev/null
         fi
     fi
     
@@ -498,32 +509,29 @@ _link() {
     echo -n "$created created, $skipped skipped, "
     echo "$cleaned cleaned, $conflicts conflicts."
     echo -en $CLEAR
-
-    # Update metadata
-    md_links_dump "$1" bins
-    md_links_dump "$1" libs
 }
 
 _unlink() {
-
+    local -A md
+    md_load "$1" || abort "package '$1' does not exist"
     md_links_exist "$1" || abort "package '$1' has no links"
 
-    local p=$(_path "$1")
-    local -A bins libs
+    local path="$ROOT/$PKG/${md[path]}"
+    local -A bin lib
     local -i removed=0 skipped=0 cleaned=0
 
     printf "\n%b" $BOLD
     printf "%-25s %-25s %s\n" 'Action' 'Linkname' 'Target'
     printf "%b" $CLEAR
    
-    if [ -n "$BIN" ] && md_links_load "$1" bins; then
-        links_remove bins "$BIN" "$p"
-        links_clean bins "$BIN" "$p"
+    if [ -n "$BIN" ] && md_links_load "$1" bin; then
+        links_remove bin "$ROOT/$BIN" "$path"
+        links_clean bin "$ROOT/$BIN" "$path"
     fi
 
-    if [ -n "$LIB" ] && md_links_load "$1" libs; then
-        links_remove libs "$LIB" "$p"
-        links_clean libs "$LIB" "$p"
+    if [ -n "$LIB" ] && md_links_load "$1" lib; then
+        links_remove lib "$ROOT/$LIB" "$path"
+        links_clean lib "$ROOT/$LIB" "$path"
     fi
 
     # Report results

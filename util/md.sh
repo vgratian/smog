@@ -4,7 +4,7 @@
 # of corresponding PKG.
 # Auxiliary metadata files contain the symbolic
 # links we created for a PKG. These files have
-# the '.libs' and '.bins' extensions respectively.
+# the '.lib' and '.bin' extensions respectively.
 
 # Test if package metadata file exist
 md_exists() {
@@ -13,7 +13,7 @@ md_exists() {
 
 # List names of all packages
 md_list() {
-    ls "$ROOT/$MDD" | grep -vE '\.(libs)|(bins)$'
+    ls "$ROOT/$MDD" | grep -vE '\.(lib)|(bin)$'
 }
 
 # Remove package metadata
