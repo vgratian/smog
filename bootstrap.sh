@@ -117,15 +117,17 @@ prepare() {
     echo "created bootstrap directory '$BOOTSTRAP_PATH'"
 
     printf "%b" $GREY
-    wget "$CONFIGDEF_URL" || abort
+    wget -nv "$CONFIGDEF_URL" || abort
     printf "%b" $CLEAR
     printf "downloaded [%s]\n" "$CONFIGDEF_URL"
 }
 
 
 cleanup() {
-    rm "$BOOTSTRAP_PATH/config*.sh"
+    echo "cleaning up"
+    rm -v "$BOOTSTRAP_PATH/$CONFIGDEF"
     rm -vd "$BOOTSTRAP_PATH"
+    echo
 }
 
 # read default config and create a new config file
@@ -170,8 +172,7 @@ configure() {
     echo
     printf "created config [%s/%s]\n" "$BOOTSTRAP_PATH" "$CONFIGSH"
     printf "please review it and hit ENTER to continue"
-    read
-    echo
+    read && echo
 }
 
 # check if variables are OK
@@ -225,13 +226,15 @@ validate() {
 
     # store unexpanded $ROOT for later use bashrc
     # val=$(grep ^$v= $CONFIGDEF | tail -n1 | cut -d= -f2-)
-    RAWROOT=$(grep '^$ROOT=' "$BOOTSTRAP_PATH/$CONFIGSH" | tail -n1 | cut -d= -f2-)
+    RAWROOT=$(grep '^ROOT=' "$BOOTSTRAP_PATH/$CONFIGSH" | tail -n1 | cut -d= -f2-)
     # to be safe
     if [ -z "$RAWROOT" ]; then
         RAWROOT="$ROOT"
     elif [ ${RAWROOT::1} == '"' ] && [ ${RAWROOT: -1} == '"' ]; then
         RAWROOT="${RAWROOT:1:-1}"
     fi
+    echo "RAWROOT = [$RAWROOT]"
+    read
 }
 
 filesystem_create() {
@@ -252,7 +255,7 @@ repository_clone() {
     echo -e "${BOLD}changed directory to '$ROOT/$SMOG'${CLEAR}"
     echo
 
-    echo -e "cloning repository [$SMOG_REPO] $GREY"
+    echo -e "cloning repository '$SMOG_REPO'$GREY"
     $GIT clone --depth=1 -c advice.detachedHead=false -b "$REF" "$SMOG_REPO".git/ .
     [ $? -ne 0 ] && abort
     # get current head SHA if in branch mode
@@ -262,9 +265,7 @@ repository_clone() {
     $GIT checkout -b "$MASTERBRANCH" || abort
     echo -e "$CLEAR"
 
-    echo -n "copy "
-    cp -v "$BOOTSTRAP_PATH/$CONFIGSH" . || abort
-    echo
+    mv -v "$BOOTSTRAP_PATH/$CONFIGSH" "$ROOT/$SMOG" || abort
 
 }
 
@@ -285,7 +286,7 @@ EOF
     echo
 }
 
-shell_integrate() {
+bash_integrate() {
     [ -z "$BIN" ] && return
 
     echo -n "symlink "
@@ -293,8 +294,8 @@ shell_integrate() {
     echo "smog: smog" >> "$ROOT/$MDD/smog.bin"
 
     if [ -z "$BASHRC" ]; then
-        echo "'\$BASHRC' is not defined, you can manually integrate smog to your shell:"
-        echo " -> update your \$PATH to include '$ROOT/$BIN'"
+        echo "'\$BASHRC' is not defined, you can manually integrate smog to your bash:"
+        echo " -> update your \$PATH to include '$RAWROOT/$BIN'"
         echo " -> source autocompletion script '$ROOT/$SMOG/bash-completion.sh'"
         return
     fi
@@ -302,37 +303,37 @@ shell_integrate() {
     local changed=
 
     # check if bashrc already contains $PKG
-    if grep '^export PATH=' "$ROOT/$BASHRC" | grep -qE "/$BIN[:\"]"; then
+    if grep '^export PATH=' "$ROOT/$BASHRC" 2>/dev/null | grep -qE "/$BIN[:\"]"; then
         echo "seems like '$BASHRC' already contains path '$ROOT/$BIN'"
     # put after last 'export PATH' or before first 'return'
     else
-        local EXPORT_PATH="export PATH=\"$ROOT/$BIN:\$PATH\""
+        local EXPORT_PATH="export PATH=\"$RAWROOT/$BIN:\$PATH\""
         local line=$( grep -n '^export PATH' "$ROOT/$BASHRC" | tail -n1 | cut -d: -f1 )
         if [ -n "$line" ] && [ "$line" -gt 0 ]; then
             ((line++))
-            sed -i \'"$line" i "$EXPORT_PATH"\' "$ROOT/$BASHRC"
-            sed -i \'"$line" i "$EXPORT_PATH_COMMENT"\' "$ROOT/$BASHRC"
+            sed -i \'"$line" i "$EXPORT_PATH"\' "$ROOT/$BASHRC" \ &&
+            sed -i \'"$line" i "$EXPORT_PATH_COMMENT"\' "$ROOT/$BASHRC" \ &&
             echo "updated \$PATH in '$ROOT/$BASHRC' at $line"
         else
-            echo "$EXPORT_PATH_COMMENT" >> "$ROOT/$BASHRC"
-            echo "$EXPORT_PATH" >> "$ROOT/$BASHRC"
+            echo "$EXPORT_PATH_COMMENT" >> "$ROOT/$BASHRC" \ &&
+            echo "$EXPORT_PATH" >> "$ROOT/$BASHRC" \ &&
             echo "updated \$PATH in '$ROOT/$BASHRC'"
         fi
-        changed=yes
+        [ $? -eq 0 ] && changed=yes
     fi
 
     if complete -p > /dev/null 2>&1; then
-        local SOURCE_COMP=". \"$ROOT/$SMOG/bash-completion.sh\""
-        echo "$SOURCE_COMP_COMMENT" >> "$ROOT/$BASHRC"
-        echo "$SOURCE_COMP" >> "$ROOT/$BASHRC"
-        echo "added autocompletion script in '$ROOT/$BASHRC'"
+        local SOURCE_COMP=". \"$RAWROOT/$SMOG/bash-completion.sh\""
+        echo "$SOURCE_COMP_COMMENT" >> "$ROOT/$BASHRC" \ &&
+        echo "$SOURCE_COMP" >> "$ROOT/$BASHRC" \ &&
+        echo "added autocompletion script in '$ROOT/$BASHRC'" \ &&
         changed=yes
     else
         echo "skipped autocompletion script: does your bash support it?"
     fi
 
     if [ -n $changed ]; then
-        echo -e "${BOLD}tip: run '. $BASHRC' to update your shell session${CLEAR}"
+        echo -e "${BOLD}tip: run '. $BASHRC' to update your bash session${CLEAR}"
     fi
     echo
 }
@@ -346,12 +347,12 @@ ldconf_integrate() {
         return
     fi
 
-    echo "integrating '$ROOT/$LIBS' to ldconfig.."
+    echo "integrating '$ROOT/$LIB' to ldconfig.."
 
-    local fn=($basename $LDSOCONF)
+    local fn=$(basename $LDSOCONF)
     local dest=$(dirname $LDSOCONF)
 
-    if ! ldconfig --help > /dev/null 2>&1; then
+    if ! ldconfig --version > /dev/null 2>&1; then
         echo "skip: seems like you don't use ldconfig"
         return
     fi
@@ -365,11 +366,11 @@ ldconf_integrate() {
     if ( >> "$dest/test" ) 2> /dev/null; then
         mv -v "$fn" "$dest"
     else
-        echo "sudo required to create file [$LDSOCONF]"
+        echo "sudo required to create '$LDSOCONF'"
         sudo mv -v "$fn" "$dest"
     fi
 
-    echo "tip: whenever smog links shared libs, run 'sudo ldconfig' to update cache'"
+    echo "${BOLD}tip: after running 'smog link PKG', run 'sudo ldconfig' to update cache${CLEAR}"
     echo
 }
 

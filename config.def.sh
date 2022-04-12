@@ -33,7 +33,7 @@ NPROCS=$((`nproc`*2))
 
 # path to file created to integrate smog with ldconfig
 # empty means no file will be created
-LDSOCONF="/etc/ld.so.conf.d/libsmog_${USER}.conf"
+LDSOCONF="/etc/ld.so.conf.d/${USER}_libsmog.conf"
 
 # path to your bashrc, used to update your PATH environment variable
 # empty means don't update PATH
