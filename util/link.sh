@@ -140,19 +140,19 @@ links_edit() {
 # Note: filepaths are relative in the 'root' directory:
 # $1
 #
-# Please preserve the file format. Please don't change comments!"
+# Please preserve the file format. Please don't change comments!
+
 EOF
 
     if [ ${#btargs[@]} -ne 0 ]; then
-        echo "$bsection" >> "$fn"
         echo "" >> "$fn"
+        echo "$bsection" >> "$fn"
         for k in "${!btargs[@]}"; do echo "${btargs[$k]} -> $k" >> "$fn"; done
     fi
 
     if [ ${#ltargs[@]} -ne 0 ]; then
         echo "" >> "$fn"
         echo "$lsection" >> "$fn"
-        echo "" >> "$fn"
         for k in "${!ltargs[@]}"; do echo "${ltargs[$k]} -> $k" >> "$fn"; done
     fi
 

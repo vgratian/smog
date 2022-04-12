@@ -53,6 +53,7 @@ you will be asked what parameters to use.
   -> enter double quotes (\"\") to unset it or set it to empty.
   -> note: values can be nested bash variables or commands."
 
+RAWROOT=
 EXPORT_PATH_COMMENT="# directory of binary symlinks maintained by smog"
 SOURCE_COMP_COMMENT="# autocomplete script for smog commands and packages"
 
@@ -116,9 +117,15 @@ prepare() {
     echo "created bootstrap directory '$BOOTSTRAP_PATH'"
 
     printf "%b" $GREY
-    cp "$CONFIGDEF_PATH" "$CONFIGDEF" || abort
+    wget "$CONFIGDEF_URL" || abort
     printf "%b" $CLEAR
     printf "downloaded [%s]\n" "$CONFIGDEF_URL"
+}
+
+
+cleanup() {
+    rm "$BOOTSTRAP_PATH/config*.sh"
+    rm -vd "$BOOTSTRAP_PATH"
 }
 
 # read default config and create a new config file
@@ -215,6 +222,16 @@ validate() {
     [ -z $ok ] && abort
     echo "OK"
     echo
+
+    # store unexpanded $ROOT for later use bashrc
+    # val=$(grep ^$v= $CONFIGDEF | tail -n1 | cut -d= -f2-)
+    RAWROOT=$(grep '^$ROOT=' "$BOOTSTRAP_PATH/$CONFIGSH" | tail -n1 | cut -d= -f2-)
+    # to be safe
+    if [ -z "$RAWROOT" ]; then
+        RAWROOT="$ROOT"
+    elif [ ${RAWROOT::1} == '"' ] && [ ${RAWROOT: -1} == '"' ]; then
+        RAWROOT="${RAWROOT:1:-1}"
+    fi
 }
 
 filesystem_create() {
@@ -232,7 +249,8 @@ filesystem_create() {
 
 repository_clone() {
     cd "$ROOT/$SMOG"
-    echo "changed directory to '$ROOT/$SMOG'"
+    echo -e "${BOLD}changed directory to '$ROOT/$SMOG'${CLEAR}"
+    echo
 
     echo -e "cloning repository [$SMOG_REPO] $GREY"
     $GIT clone --depth=1 -c advice.detachedHead=false -b "$REF" "$SMOG_REPO".git/ .
@@ -257,7 +275,7 @@ metadata_create() {
     touch "$f" || abort "failed to create metadata '$f'"
 
     cat << EOF > "$f"
-url: $SMOG_REPO
+url: $SMOG_REPO.git/
 path: $SMOG
 mode: $MODE
 ref: $REF
@@ -270,7 +288,7 @@ EOF
 shell_integrate() {
     [ -z "$BIN" ] && return
 
-    echo "symlink "
+    echo -n "symlink "
     ln -sv "$ROOT/$SMOG/smog" "$ROOT/$BIN/smog"
     echo "smog: smog" >> "$ROOT/$MDD/smog.bin"
 
@@ -281,12 +299,14 @@ shell_integrate() {
         return
     fi
 
+    local changed=
+
     # check if bashrc already contains $PKG
-    if grep '^export PATH=' "$ROOT/$BASHRC" | grep -qE "/$PKG[:\"]"; then
-        echo "seems like '$BASHRC' already contains path '$ROOT/$PKG'"
+    if grep '^export PATH=' "$ROOT/$BASHRC" | grep -qE "/$BIN[:\"]"; then
+        echo "seems like '$BASHRC' already contains path '$ROOT/$BIN'"
     # put after last 'export PATH' or before first 'return'
     else
-        local EXPORT_PATH="export PATH=\"$ROOT/$PKG:\$PATH\""
+        local EXPORT_PATH="export PATH=\"$ROOT/$BIN:\$PATH\""
         local line=$( grep -n '^export PATH' "$ROOT/$BASHRC" | tail -n1 | cut -d: -f1 )
         if [ -n "$line" ] && [ "$line" -gt 0 ]; then
             ((line++))
@@ -298,16 +318,23 @@ shell_integrate() {
             echo "$EXPORT_PATH" >> "$ROOT/$BASHRC"
             echo "updated \$PATH in '$ROOT/$BASHRC'"
         fi
+        changed=yes
     fi
 
     if complete -p > /dev/null 2>&1; then
         local SOURCE_COMP=". \"$ROOT/$SMOG/bash-completion.sh\""
         echo "$SOURCE_COMP_COMMENT" >> "$ROOT/$BASHRC"
         echo "$SOURCE_COMP" >> "$ROOT/$BASHRC"
-        echo "add autocompletion script in '$ROOT/$BASHRC'"
+        echo "added autocompletion script in '$ROOT/$BASHRC'"
+        changed=yes
     else
         echo "skipped autocompletion script: does your bash support it?"
     fi
+
+    if [ -n $changed ]; then
+        echo -e "${BOLD}tip: run '. $BASHRC' to update your shell session${CLEAR}"
+    fi
+    echo
 }
 
 ldconf_integrate() {
@@ -352,6 +379,8 @@ bootstrap() {
     filesystem_create && repository_clone && metadata_create
 
     shell_integrate && ldconf_integrate
+
+    cleanup
 
     echo -e "$BOLD"
     echo "successfully bootstrapped smog!"

@@ -136,11 +136,10 @@ _show() {
 }
 
 # Print path of local repository. Useful to quickly
-# change directory. E.g., run "cd `smog path -m PKG`".
+# change directory. E.g., run "cd `smog path PKG`".
 _path() {
     md_exists "$1" || abort "package '$1' does not exist"
-    # with '-m' print full path
-    [ ${OPTS[more]+_} ] && echo -n "$ROOT/$PKG/"
+    echo -n "$ROOT/$PKG/"
     grep '^path: ' "$ROOT/$MDD/$1" | cut -d' ' -f2-
 }
 
