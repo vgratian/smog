@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 
+set -e 
+
 readonly NAME=$(basename $0)
 readonly VERSION='0.0.0'
 
-version() {
+_version() {
     echo "${NAME} v${VERSION}"
 }
 
+_usage() {
+    echo "Usage: $NAME COMMAND [ARG] [OPTIONS]"
+}
 
-#TODO move details to README
-usage() {
+_help() {
+    _usage
     cat << EOF
-Usage: ${NAME} COMMAND [OPTS.. ARGS..]
 
 Commands:
     list          List all local packages
@@ -541,23 +545,25 @@ if [ "$EUID" -eq 0 ] || [ "$(id -u 2>/dev/null)" -eq 0 ]; then
 fi
 
 # figure out home directory and import config
-[ -L "$0" ] && confp=$(dirname $(readlink $0))/config || confp=$(dirname $0)/config
-[ -e "$confp" ] || abort "can't find '$confp'"
-. $confp || abort
+if [ -L "$0" ]; then
+    confp=$(dirname $(readlink $0))/config
+else
+    confp=$(dirname $0)/config
+fi
 
-# TODO: remove cd && use $SMOG_PATH
-cd `dirname $confp`
+. $confp
+unset confp
 
-declare UTIL=(color md url git sync link)
-for u in ${UTIL[@]}; do
-    . util/$u || abort
+# import utils
+for u in color md url git sync link; do
+    . $SMOG/util/$u
 done
-unset UTIL confp
 
+# check for commands that need no further work 
 case $1 in
-    -h | --help | help ) usage && exit 0 ;;
-    -v | --version | version ) version && exit 0 ;;
-    * ) [ -z "$1" ] && usage && abort 'missing command' ;;
+    -h | --help | help ) _help && exit 0 ;;
+    -v | --version | version ) _version && exit 0 ;;
+    * ) [ -z "$1" ] && _usage && abort 'error: missing command' ;;
 esac
 
 declare -a ARGS
@@ -565,8 +571,8 @@ declare -A OPTS
 declare CMD=$1
 shift
 
-# it would have been easier to use getopts, but we need more flexibility
-# rules are:
+# it would have been easier to use getopts, but I needed need more flexibility
+# rules for parsing options and arguments:
 #   - boolean options are lowercased and can be combined (e.g. '-ft')
 #   - options with argument are uppercased, can be only combined as last option (e.g. '-fB master')
 #   - anything else (at any position) is argument to CMD
@@ -631,7 +637,7 @@ esac
 # lock metadata
 case $CMD in
     add | remove | update | link | unlink | set )
-        md_lock && trap 'md_unlock' INT HUP QUIT ERR EXIT || abort "metadata directory already locked" ;;
+        md_lock && trap 'md_unlock' EXIT || abort "metadata locked" ;;
 esac
 
 _$CMD "${ARGS[@]}"
