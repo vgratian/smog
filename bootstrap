@@ -1,26 +1,29 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# These section contains fixed parameters, please do not change
-BOOTSTRAP=$(basename $0)
-#REF="0.0.1"
-REF=master
-#MODE=tag
-MODE=branch
-SHA=
+# -- variables we need to download source files and create a smog package -- #
+# -- note: make sure we don't overwrite those, when we source 'config.sh' -- #
+
+BOOTSTRAPSH=$(basename $0)
+
+# used to create package metadata
+REF='0.0.0'
+MODE='tag'
+
 CONFIGSH="config.sh"
 CONFIGDEF="config.def.sh"
-SMOG_REPO="https://gitlab.com/vgratian/smog"
-CONFIGDEF_URL="${SMOG_REPO}/-/raw/${REF}/${CONFIGDEF}"
-BOOTSTRAP_URL="${SMOG_REPO}/-/raw/${REF}/${BOOTSTRAP}"
 
-# Directory where we will download temporary files
+SMOGPATH="github.com/vgratian/smog"
+SMOGPKG="\$PKG/$SMOGPATH"  # local repo path
+SMOGURL="https://$SMOGPATH" # git repo url
+
+CONFIGDEF_URL="$SMOGURL/-/raw/$REF/$CONFIGDEF"
+BOOTSTRAP_URL="$SMOGURL/-/raw/$REF/$BOOTSTRAPSH"
+
+# directory for temporary files
 BOOTSTRAP_PATH="/tmp/smog_boostrap"
 
-# If you don't want to be asked questions, use the "-s" (silent) flag
-INTERACTIVE=true
-
-# List of parameters that are required to configure smog. Default
-# values are defined below or will be sourced from "config.sh.def".
+# variables required to configure smog (i.e. create 'config.sh')
+# default values will be imported from 'config.sh.def'
 declare -a VARS
 VARS=( GIT EDITOR ROOT PKG BIN LIB SMOG MDD MASTERBRANCH NPROCS LDSOCONF BASHRC )
 
@@ -35,7 +38,8 @@ COMMENTS=(
 this is used when you invoke 'smog reflect PKG' and smog detects executables"
     [LIB]="directory where smog will create symlinks to shared libraries
 this is used when you invoke 'smog reflect PKG' and smog detects .so files"
-    [SMOG]="directory where smog itself will be cloned"
+    [SMOG]="directory where smog itself will be cloned
+this parameter cannot be modified if you run the bootstrapper"
     [MDD]="subdirectory where smog will store metadata of packages"
     [MASTERBRANCH]="name of the branch that smog will create after cloning a repository
 (such that your local changes don't mess with the upstream source code)"
@@ -47,6 +51,9 @@ empty means no file will be created"
 empty means don't update PATH"
 )
 
+# ask input for each variable in config.sh
+INTERACTIVE=true
+
 INTERACTIVE_GUIDE="
 you will be asked what parameters to use.
   -> hit ENTER to use default value (printed in square brackets)
@@ -54,6 +61,9 @@ you will be asked what parameters to use.
   -> note: values can be nested bash variables or commands."
 
 RAWROOT=
+SMOGPKG="gitlab.com/vgratian/smog"
+SMOGDEF='$PKG/gitlab.com/vgratian/smog'
+
 EXPORT_PATH_COMMENT="# directory of binary symlinks maintained by smog"
 SOURCE_COMP_COMMENT="# autocomplete script for smog commands and packages"
 
@@ -62,13 +72,7 @@ BOLD="\033[1m"
 CLEAR="\033[0m"
 GREY="\033[90m"
 
-version() {
-    echo "smog bootstrapper v${REF}"
-}
 
-usage() {
-    version
-    echo "
 DESCRPTION:
     This script will bootstrap smog and configure itself as a smog package.
     Normally, the bootstrap process will run interactively and ask what
@@ -84,16 +88,16 @@ USAGE:
         wget ${BOOTSTRAP_URL}
 
     Run the bootstrap:
-        ./${BOOTSTRAP} [-s]
+        bash ${BOOTSTRAP}
 
     Undo the bootstrap:
-        ./${BOOTSTRAP} undo
+        bash ${BOOTSTRAP} undo
 
     Show bootstrap version:
-        ./${BOOTSTRAP} version
+        bash ${BOOTSTRAP} version
 
     Show this help message:
-        ./${BOOTSTRAP} help
+        bash ${BOOTSTRAP} help
 
 OPTIONS:
     -s      run silently and use default parameters
@@ -119,7 +123,7 @@ prepare() {
     printf "%b" $GREY
     wget -nv "$CONFIGDEF_URL" || abort
     printf "%b" $CLEAR
-    printf "downloaded [%s]\n" "$CONFIGDEF_URL"
+    printf "downloaded '%s'\n" "$CONFIGDEF_URL"
 }
 
 
@@ -158,8 +162,12 @@ configure() {
             printf "${COMMENTS[$v]}"
             printf "%b\n" "$CLEAR"
             # ask user input
-            read -p "value for $v [$val]: "
-            [ -n "$REPLY" ] && val="$REPLY"
+            if [ "$v" == SMOG ]; then
+                read -p "value of $v [$val]: (enter to continue)"
+            else
+                read -p "value for $v [$val]: "
+                [ -n "$REPLY" ] && val="$REPLY"
+            fi
         fi
 
         # write to config file
@@ -170,8 +178,8 @@ configure() {
     done
 
     echo
-    printf "created config [%s/%s]\n" "$BOOTSTRAP_PATH" "$CONFIGSH"
-    printf "please review it and hit ENTER to continue"
+    echo "created config '$BOOTSTRAP_PATH/$CONFIGSH'"
+    echo "please review and hit ENTER to continue"
     read && echo
 }
 
@@ -213,6 +221,17 @@ validate() {
         fi
     done
 
+    # the directory PKG should be empty, otherwise we might mess up with other files
+    # (it's okay if LIB or BIN are non-empty)
+    if [ -d "$ROOT/$PKG" ] &&
+    RAWSMOG=$(grep '^SMOG=' "$BOOTSTRAP_PATH/$CONFIGSH" | tail -n1 | cut -d= -f2-)
+    [ ${RAWSMOG::1} == '"' ] && [ ${RAWSMOG: -1} == '"' ] && RAWSMOG="${RAWSMOG:1:-1}"
+    if [ "$RAWSMOG" != "$SMOGDEF" ]; then
+        echo "    error: bootstrapper can only work if 'SMOG' has value '$SMOGDEF'"
+        echo "    your config has '$RAWSMOG' instead"
+        abort
+    fi
+
     # nprocs must be valid integer
     test "$NPROCS" -ge 0 2> /dev/null
     if [ $? -ne 0 ]; then
@@ -233,8 +252,6 @@ validate() {
     elif [ ${RAWROOT::1} == '"' ] && [ ${RAWROOT: -1} == '"' ]; then
         RAWROOT="${RAWROOT:1:-1}"
     fi
-    echo "RAWROOT = [$RAWROOT]"
-    read
 }
 
 filesystem_create() {
@@ -277,7 +294,7 @@ metadata_create() {
 
     cat << EOF > "$f"
 url: $SMOG_REPO.git/
-path: $SMOG
+path: $SMOGPKG
 mode: $MODE
 ref: $REF
 EOF
@@ -370,7 +387,7 @@ ldconf_integrate() {
         sudo mv -v "$fn" "$dest"
     fi
 
-    echo "${BOLD}tip: after running 'smog link PKG', run 'sudo ldconfig' to update cache${CLEAR}"
+    echo -e "${BOLD}tip: after running 'smog link PKG', run 'sudo ldconfig' to update cache${CLEAR}"
     echo
 }
 
@@ -379,7 +396,7 @@ bootstrap() {
 
     filesystem_create && repository_clone && metadata_create
 
-    shell_integrate && ldconf_integrate
+    bash_integrate && ldconf_integrate
 
     cleanup
 

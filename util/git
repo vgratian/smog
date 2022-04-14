@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/bash
 
 # List available or matching git refs. This function is
 # a wrapper around the 'git ls-remote' command.

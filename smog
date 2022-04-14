@@ -1,7 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-NAME=$(basename $0)
-VERSION='0.0.1'
+readonly NAME=$(basename $0)
+readonly VERSION='0.0.0'
 
 version() {
     echo "${NAME} v${VERSION}"
@@ -39,7 +39,7 @@ Options:
 
     -T  <TAG>     Use tag TAG only (valid for 'add' and 'update')
     -B  <BRANCH>  Use branch BRANCH (valid for 'add' and 'update')
-    -R  <DIR>     Scan DIR instead of root directory of package (for 'link')
+    -r  <dir>     Scan DIR instead of root directory of package (for 'link')
 
 Modes:
     Smog links each local package to a remote git "ref", this is either
@@ -88,8 +88,6 @@ _listmore() {
     local -A md
 
     printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "url" $CLEAR
-    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~ "
-    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
 
     for pkg in $(md_list); do
         md=()
@@ -97,9 +95,6 @@ _listmore() {
         printf "%-30s %b%6s%b %-13s %s\n" "$pkg" $GREY "${md[mode]}" $CLEAR \
             "${md[ref]}" "${md[url]}"
     done
-    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~ "
-    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-
 }
 
 # Raw list of packages
@@ -115,13 +110,8 @@ _showmore() {
     md_load "$1" || abort "package '$1' does not exist"
 
     printf "%b%-30s %s%b\n" "$BOLD" "package" "$1" "$CLEAR"
-    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ "
-    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
 
     for key in ${!md[@]}; do printf "%-30s " "$key"; echo ${md[$key]}; done
-
-    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ "
-    printf "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
 
     # number of symlinks
     printf "%b" $GREY
@@ -546,10 +536,12 @@ _unlink() {
 # ---- main routine ---- #
 
 # reject to run as root user
-[ "$UID" -eq 0 ] && abort "please don't run $NAME as root"
+if [ "$EUID" -eq 0 ] || [ "$(id -u 2>/dev/null)" -eq 0 ]; then
+    abort "please don't run $NAME as root"
+fi
 
 # figure out home directory and import config
-[ -L "$0" ] && confp=$(dirname $(readlink $0))/config.sh || confp=$(dirname $0)/config.sh
+[ -L "$0" ] && confp=$(dirname $(readlink $0))/config || confp=$(dirname $0)/config
 [ -e "$confp" ] || abort "can't find '$confp'"
 . $confp || abort
 
@@ -558,7 +550,7 @@ cd `dirname $confp`
 
 declare UTIL=(color md url git sync link)
 for u in ${UTIL[@]}; do
-    . util/$u.sh || abort
+    . util/$u || abort
 done
 unset UTIL confp
 
@@ -634,6 +626,12 @@ case $CMD in
     set )
         [ ${#ARGS[@]} -ne 2 ] && abort "$CMD: requires 2 arguments <PKG> <KEY>" ;;
     * ) abort "invalid command '$CMD'" ;;
+esac
+
+# lock metadata
+case $CMD in
+    add | remove | update | link | unlink | set )
+        md_lock && trap 'md_unlock' INT HUP QUIT ERR EXIT || abort "metadata directory already locked" ;;
 esac
 
 _$CMD "${ARGS[@]}"

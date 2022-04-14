@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env false
 
 BOLD="\033[1m"
 CLEAR="\033[0m"

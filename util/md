@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # Functions for working with metadata files.
 # These are plain text files, each line is
 # one key-value pair. File name is exact name
@@ -5,6 +7,16 @@
 # Auxiliary metadata files contain the symbolic
 # links we created for a PKG. These files have
 # the '.lib' and '.bin' extensions respectively.
+
+readonly LOCKFP="$ROOT/$MDD/.lock"
+
+md_lock() {
+    test ! -f "$LOCKFP" && echo >> "$LOCKFP"
+}
+
+md_unlock() {
+    rm "$LOCKFP"
+}
 
 # Test if package metadata file exist
 md_exists() {
