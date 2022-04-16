@@ -18,14 +18,14 @@ BIN="bin"
 LIB="lib"
 
 # directory where smog itself will be cloned
-SMOG="$PKG/gitlab.com/vgratian/smog"
+SMOG="$PKG/github.com/vgratian/smog"
 
 # subdirectory where smog will store metadata of packages
 MDD="$SMOG/mdd"
 
 # name of the branch that smog will create after cloning a repository
 # (such that your local changes don't mess with the upstream source code)
-MASTERBRANCH="mastermind"
+LOCALBRANCH="mastermind"
 
 # number of processes to use when syncing packages (passed to xargs)
 # default is number of CPUs * 2; use '0' to run as many as possible
