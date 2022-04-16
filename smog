@@ -287,7 +287,7 @@ _add() {
 	$GIT clone --depth=1 -c advice.detachedHead=false -b "$ref" "$url" "$ROOT/$PKG/$path"
 	[ $? -ne 0 ] && rm -rf "$ROOT/$PKG/$path" && abort
 
-	$GIT checkout -b "${MASTERBRANCH}" 
+	$GIT checkout -b "${LOCALBRANCH}" 
 	[ $? -ne 0 ] && rm -rf "$ROOT/$PKG/$path" && abort
 	echo -en "$CLEAR"
 
@@ -355,11 +355,11 @@ _update() {
     # Enter package directory
     echo "entering directory '${md[path]}'"
     cd "$ROOT/$PKG/${md[path]}" || abort
-    $GIT checkout -q "$MASTERBRANCH" || abort
+    $GIT checkout -q "$LOCALBRANCH" || abort
 
     # Before fetching remote changes, make sure our
     # local branch does not have uncommitted commits.
-    echo -n "checking local changes in '$MASTERBRANCH'.. "
+    echo -n "checking local changes in '$LOCALBRANCH'.. "
     if [ -z "$($GIT status -s)" ]; then
         echo "OK: clean branch"
     else
@@ -556,7 +556,7 @@ unset confp
 
 # import utils
 for u in color md url git sync link; do
-    . $SMOG/util/$u
+    . $ROOT/$SMOG/util/$u
 done
 
 # check for commands that need no further work 

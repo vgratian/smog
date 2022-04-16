@@ -1,160 +1,153 @@
 #!/usr/bin/env bash
 
+set -e
+
 # -- variables we need to download source files and create a smog package -- #
 # -- note: make sure we don't overwrite those, when we source 'config.sh' -- #
 
-BOOTSTRAPSH=$(basename $0)
+BOOTSTRAP=bootstrap
 
-# used to create package metadata
-REF='0.0.0'
-MODE='tag'
+# target smog version
+# REF=0.0.0
+# MODE=tag
+REF=master
+MODE=tag
 
-CONFIGSH="config.sh"
-CONFIGDEF="config.def.sh"
+SMOGHOST=github.com
+SMOGPATH=vgratian/smog
+SMOGPKG="\$PKG/$SMOGHOST/$SMOGPATH"   # local repo path (with unexpanded $PKG)
+SMOGURL="https://$SMOGHOST/$SMOGPATH" # git repo url (excludes trailing .git/)
+SMOGROOT= # will store unexpanded $ROOT
 
-SMOGPATH="github.com/vgratian/smog"
-SMOGPKG="\$PKG/$SMOGPATH"  # local repo path
-SMOGURL="https://$SMOGPATH" # git repo url
+# some file names
+CONFIG=config
+CONFIGDEF=config-def
+BASHCOMPL=bash-completion
 
-CONFIGDEF_URL="$SMOGURL/-/raw/$REF/$CONFIGDEF"
-BOOTSTRAP_URL="$SMOGURL/-/raw/$REF/$BOOTSTRAPSH"
+RAWCONTENT_URL=https://raw.githubusercontent.com/$SMOGPATH
+BOOTSTRAP_URL="$RAWCONTENT_URL/master/$BOOTSTRAP" # latest version
+CONFIGDEF_URL="$RAWCONTENT_URL/$REF/$CONFIGDEF"   # should match target version
 
-# directory for temporary files
-BOOTSTRAP_PATH="/tmp/smog_boostrap"
+BOOTSTRAP_PATH=   # directory for temporary files
 
-# variables required to configure smog (i.e. create 'config.sh')
-# default values will be imported from 'config.sh.def'
-declare -a VARS
-VARS=( GIT EDITOR ROOT PKG BIN LIB SMOG MDD MASTERBRANCH NPROCS LDSOCONF BASHRC )
+# short guide about interactive bootstrapping
+INTERACTIVE="you will be asked what parameters to use
+  -> hit ENTER to use the default value [in square brackets]
+  -> enter double quotes (\"\") to unset or use empty string
+  -> value can contain bash commands or environment variables
+  -> find detailed explanation at: $SMOGURL#config"
 
-# Explanation of each parameter
-declare -A COMMENTS
-COMMENTS=(
-    [GIT]="git command that smog will invoke to clone repositories"
+# variables required to configure smog (i.e. create the file $CONFIG)
+# default values will be read from default config file $CONFIGDEF
+VARS=( GIT EDITOR ROOT PKG BIN LIB SMOG MDD LOCALBRANCH NPROCS BASHRC LDSOCONF )
+
+# short comment for each variable (more detailed explanation in README#config)
+declare -A COMMENTS=(
+    [GIT]="git command"
     [EDITOR]="text editor command"
     [ROOT]="root directory for folders defined below"
-    [PKG]="path of directory where smog will clone your git packages"
-    [BIN]="directory where smog will create symlinks to binaries
-this is used when you invoke 'smog reflect PKG' and smog detects executables"
-    [LIB]="directory where smog will create symlinks to shared libraries
-this is used when you invoke 'smog reflect PKG' and smog detects .so files"
-    [SMOG]="directory where smog itself will be cloned
-this parameter cannot be modified if you run the bootstrapper"
-    [MDD]="subdirectory where smog will store metadata of packages"
-    [MASTERBRANCH]="name of the branch that smog will create after cloning a repository
-(such that your local changes don't mess with the upstream source code)"
-    [NPROCS]="number of processes to use when syncing packages (passed to xargs)
-default is number of CPUs * 2; use '0' to run as many as possible"
-    [LDSOCONF]="path to file created to integrate smog with ldconfig
-empty means no file will be created"
-    [BASHRC]="path to your bashrc, used to update your PATH environment variable
-empty means don't update PATH"
+    [PKG]="directory for cloning and storing repositories"
+    [BIN]="directory for creating symlinks to binaries and executables"
+    [LIB]="directory for creating to shared libraries"
+    [SMOG]="directory where smog itself is cloned (can't be modified)"
+    [MDD]="directory for smog metadata files"
+    [LOCALBRANCH]="name of the local working branch"
+    [NPROCS]="number of processes to use when syncing packages"
+    [BASHRC]="bashrc filepath (in \$ROOT): to update PATH with \$BIN and add smog autocompletion"
+    [LDSOCONF]="ldconfig filepath (absolute): to allow \$LIB to be cached by ldconfig"
 )
 
-# ask input for each variable in config.sh
-INTERACTIVE=true
-
-INTERACTIVE_GUIDE="
-you will be asked what parameters to use.
-  -> hit ENTER to use default value (printed in square brackets)
-  -> enter double quotes (\"\") to unset it or set it to empty.
-  -> note: values can be nested bash variables or commands."
-
-RAWROOT=
-SMOGPKG="gitlab.com/vgratian/smog"
-SMOGDEF='$PKG/gitlab.com/vgratian/smog'
-
+# comments for $BASHRC (if we edit it)
 EXPORT_PATH_COMMENT="# directory of binary symlinks maintained by smog"
 SOURCE_COMP_COMMENT="# autocomplete script for smog commands and packages"
 
 # terminal colors
-BOLD="\033[1m"
-CLEAR="\033[0m"
-GREY="\033[90m"
+BOLD=
+GREY=
+CLEAR=
 
+if tput colors > /dev/null 2>&1; then
+    BOLD="\033[1m"
+    CLEAR="\033[0m"
+    GREY="\033[90m"
+fi
 
+version() {
+    echo "bootstrapper for smog '$MODE $REF'"
+}
+
+usage() {
+    version
+    cat << EOF
 DESCRPTION:
-    This script will bootstrap smog and configure itself as a smog package.
-    Normally, the bootstrap process will run interactively and ask what
-    parameters to use. The '-s' flag will force it to run silently and use
-    default parameters instead.
+    This script will configure and install smog. The bootstrapper will run
+    interactively and ask what parameters to use. Use the 'silent' flag to
+    run silently and use default values.
 
     With the 'undo' argument, the script will uninstall smog. CAUTION:
     this will permanently delete not only smog, but also all packages that
-    you might have installed with it.
+    you might have created with it.
 
 USAGE:
     Download the bootstrap script:
-        wget ${BOOTSTRAP_URL}
+        wget -nv $BOOTSTRAP_URL
 
     Run the bootstrap:
-        bash ${BOOTSTRAP}
+        bash $BOOTSTRAP
+
+    Or bootstrap with less questions:
+        bash $BOOTSTRAP silent
 
     Undo the bootstrap:
-        bash ${BOOTSTRAP} undo
+        bash $BOOTSTRAP undo
 
-    Show bootstrap version:
-        bash ${BOOTSTRAP} version
+    Show target version:
+        bash $BOOTSTRAP version
 
     Show this help message:
-        bash ${BOOTSTRAP} help
+        bash $BOOTSTRAP help
 
-OPTIONS:
-    -s      run silently and use default parameters
-    "
+EOF
 }
 
 abort() {
     echo "${1-abort}" >&2
     exit 1
 }
-
-# create tmp directory and download default config
-prepare() {
-    # clean up existing directory
-    if [ -d "$BOOTSTRAP_PATH" ]; then
-        rm -rvf "$BOOTSTRAP_PATH" || abort
-    fi
-
-    mkdir -p "$BOOTSTRAP_PATH" || abort
-    cd "$BOOTSTRAP_PATH"
-    echo "created bootstrap directory '$BOOTSTRAP_PATH'"
-
-    printf "%b" $GREY
-    wget -nv "$CONFIGDEF_URL" || abort
-    printf "%b" $CLEAR
-    printf "downloaded '%s'\n" "$CONFIGDEF_URL"
-}
-
-
+    
+# clean up bootstrap directory
 cleanup() {
-    echo "cleaning up"
-    rm -v "$BOOTSTRAP_PATH/$CONFIGDEF"
-    rm -vd "$BOOTSTRAP_PATH"
-    echo
+    printf "\ncleaning up\n%b" $GREY
+    # i'm paranoic
+    [ "${BOOTSTRAP_PATH::5}" == /tmp/ ] && [ -d "$BOOTSTRAP_PATH" ] \
+        && rm -rvf "$BOOTSTRAP_PATH"
+    printf "%b" $CLEAR
 }
 
 # read default config and create a new config file
 configure() {
-    [ -r "$CONFIGDEF" ] || abort "can't read [$CONFIGDEF]"
+    # download default config from remote
+    printf "%b" $GREY
+    wget -nv "$CONFIGDEF_URL" || abort
+    printf "%b" $CLEAR
 
-    # config file should not exist, not a problem, but might
-    # be a sign you are messing up with an existing installation
-    [ -e "$CONFIGSH" ] && abort "file '"$CONFIGSH"' already exists"
+    test -r "$CONFIGDEF" || abort
+    printf "downloaded '%s'\n" "$CONFIGDEF_URL"
 
-    touch "$CONFIGSH" || abort
+    touch "$CONFIG"
 
     printf "\n%b" $BOLD
     if [ -z "$INTERACTIVE" ]; then
         printf "configuring smog with default parameters\n%b" $CLEAR
     else
-        printf "configuring smog interactively:%b%s\n" $CLEAR "$INTERACTIVE_GUIDE"
+        printf "configuring smog interactively:%b\n%s\n" $CLEAR "$INTERACTIVE"
     fi
 
+    # read default value of each variable and write into new config file
     for v in "${VARS[@]}"; do
 
-        # read default value (this way, we don't expand nested vars)
-        val=$(grep ^$v= $CONFIGDEF | tail -n1 | cut -d= -f2-)
+        # unexpanded default value
+        val=$(grep ^$v= $CONFIGDEF | tail -1 | cut -d= -f2-)
 
         if [ "$INTERACTIVE" ]; then
             # print comment about parameter
@@ -171,14 +164,12 @@ configure() {
         fi
 
         # write to config file
-        readarray -t comments <<< ${COMMENTS[$v]}
-        # start each comment line with '#'
-        for c in "${comments[@]}"; do printf "# %s\n" "$c" >> $CONFIGSH; done
-        printf "%s=%s\n\n" "$v" "$val" >> $CONFIGSH
+        printf "# %s\n" "${COMMENTS[$v]}" >> $CONFIG
+        printf "%s=%s\n\n" "$v" "$val" >> $CONFIG
     done
 
     echo
-    echo "created config '$BOOTSTRAP_PATH/$CONFIGSH'"
+    echo "created config '$BOOTSTRAP_PATH/$CONFIG'"
     echo "please review and hit ENTER to continue"
     read && echo
 }
@@ -186,185 +177,253 @@ configure() {
 # check if variables are OK
 validate() {
 
-    local ok=true
-    echo "validating $CONFIGSH.. "
+    local ok=ok
+    echo "validating $CONFIG.. "
 
-    #. "$BOOTSTRAP_PATH/$CONFIGSH" || abort "can't source $CONFIGSH"
-    . "$BOOTSTRAP_PATH/$CONFIGSH" 
+    . "$BOOTSTRAP_PATH/$CONFIG" 
 
     # TODO check bash version
 
-    echo -n " -> checking GIT [$GIT].. "
-    $GIT version > /dev/null
-    if [ $? -ne 0 ]; then
-        echo "git command failed"
-        ok=
-    else
-        echo "OK"
-    fi
+    echo -n "checking GIT [$GIT].. "
+    command -v $GIT > /dev/null && echo "OK" || ok=
 
-    echo -n " -> checking EDITOR [$EDITOR].. "
-    which $EDITOR > /dev/null 2>&1
-    if [ $? -ne 0 ]; then
-        echo "editor command failed"
-        ok=
-    else
-        echo "OK"
-    fi
+    echo -n "checking EDITOR [$EDITOR].. "
+    command -v $EDITOR > /dev/null && echo "OK" || ok=
 
     # check variables which can't be empty
-    echo " -> checking required variables.. "
-    for v in ROOT PKG SMOG MDD MASTERBRANCH NPROCS; do
+    echo "checking required variables.. "
+    for v in ROOT PKG SMOG MDD LOCALBRANCH NPROCS; do
         if [ -z "${!v}" ]; then
-            echo "     '$v' can't be empty"
+            echo " -> '$v' can't be empty"
             ok=
         fi
     done
 
-    # the directory PKG should be empty, otherwise we might mess up with other files
-    # (it's okay if LIB or BIN are non-empty)
-    if [ -d "$ROOT/$PKG" ] &&
-    RAWSMOG=$(grep '^SMOG=' "$BOOTSTRAP_PATH/$CONFIGSH" | tail -n1 | cut -d= -f2-)
-    [ ${RAWSMOG::1} == '"' ] && [ ${RAWSMOG: -1} == '"' ] && RAWSMOG="${RAWSMOG:1:-1}"
-    if [ "$RAWSMOG" != "$SMOGDEF" ]; then
-        echo "    error: bootstrapper can only work if 'SMOG' has value '$SMOGDEF'"
-        echo "    your config has '$RAWSMOG' instead"
-        abort
-    fi
-
-    # nprocs must be valid integer
-    test "$NPROCS" -ge 0 2> /dev/null
-    if [ $? -ne 0 ]; then
-        echo "     'NPROCS' positive integer"
+    # nprocs must be unsigned integer
+    if ! ( test "$NPROCS" -ge 0 ) 2> /dev/null; then
+        echo " -> 'NPROCS' must be 0 or positive integer"
         ok=
     fi
 
-    [ -z $ok ] && abort
-    echo "OK"
-    echo
-
-    # store unexpanded $ROOT for later use bashrc
-    # val=$(grep ^$v= $CONFIGDEF | tail -n1 | cut -d= -f2-)
-    RAWROOT=$(grep '^ROOT=' "$BOOTSTRAP_PATH/$CONFIGSH" | tail -n1 | cut -d= -f2-)
-    # to be safe
-    if [ -z "$RAWROOT" ]; then
-        RAWROOT="$ROOT"
-    elif [ ${RAWROOT::1} == '"' ] && [ ${RAWROOT: -1} == '"' ]; then
-        RAWROOT="${RAWROOT:1:-1}"
+    # PKG should not contain subdirectories (avoid messing up directories later)
+    if [ -d "$ROOT/$PKG" ] && ls -F "$ROOT/$PKG" | grep -q /$; then
+        echo " -> '$ROOT/$PKG' should not contain subdirectories"
+        ok=
     fi
+
+    # SMOG should not be changed
+    local smogpkg=$(grep '^SMOG=' "$BOOTSTRAP_PATH/$CONFIG" | cut -d= -f2-)
+    [ ${smogpkg::1} == '"' ] && smogpkg="${smogpkg:1:-1}"
+    if [ "$smogpkg" != "$SMOGPKG" ]; then
+        echo " -> 'SMOG' value is '$smogpkg', but expected '$SMOGPKG'"
+        ok=
+    fi
+
+    # SMOG should not exist or be empty
+    if [ -d "$ROOT/$SMOG" ] && [ $(ls "$ROOT/$SMOG" | wc -l) -ne 0 ]; then
+        echo " -> '$ROOT/$SMOG' should not exist or be empty"
+        ok=
+    fi
+
+    # store unexpanded $ROOT for later use in bashrc
+    SMOGROOT=$(grep '^ROOT=' "$BOOTSTRAP_PATH/$CONFIG" | cut -d= -f2-)
+    # to be safe
+    if [ -z "$SMOGROOT" ]; then
+        SMOGROOT="$ROOT"
+    elif [ ${SMOGROOT::1} == '"' ] && [ ${SMOGROOT: -1} == '"' ]; then
+        SMOGROOT="${SMOGROOT:1:-1}"
+    fi
+
+    test -z $ok && abort || printf "OK\n\n"
 }
 
 filesystem_create() {
-    echo "creating directories.."
-
-    # jic
-    [ -d "$ROOT/$SMOG" ] && abort "directory '$ROOT/$SMOG' exists"
+    echo "creating filesystem"
 
     for d in BIN LIB PKG SMOG; do
         [ -z "${!d}" ] && continue
         [ -d "$ROOT/${!d}" ] && continue  # TODO warn?
-        mkdir -vp "$ROOT/${!d}" || abort
+        mkdir -vp "$ROOT/${!d}"
+    done
+
+    cd "$ROOT/$SMOG"
+    printf "changed directory to '%s'\n" "$ROOT/$SMOG"
+    printf "cloning repository '%s'\n" "$SMOGURL"
+    printf "%b" $GREY
+
+    # from here on, we simulate how smog would create a package
+
+    $GIT clone --depth=1 -c advice.detachedHead=false -b "$REF" "$SMOGURL.git/" .
+    
+    # get current head SHA if in branch mode
+    if [ $MODE == branch ]; then
+        SHA=$( $GIT log origin/$REF -1 --pretty=format:%H )
+    fi
+
+    $GIT checkout -b "$LOCALBRANCH"
+    echo -e "$CLEAR"
+
+    # copy config file we created
+    mv -v "$BOOTSTRAP_PATH/$CONFIG" .
+
+    # create metadata directory and metadata file for smog
+    mkdir -vp "$ROOT/$MDD"
+    local md=("url: $SMOGURL.git/" "path: $SMOGPKG" "mode: $MODE" "ref: $REF")
+    [ $MODE == branch ] && md+=("sha: $SHA")
+
+    printf '%s\n' "${md[@]}" > "$ROOT/$MDD/smog"
+
+    printf "created metadata file '%s'\n\n" "$ROOT/$MDD/smog"
+}
+
+
+filesystem_remove() {
+    echo "removing filesystem"
+
+    local d
+    # sanity check
+    for d in ROOT SMOG MDD; do
+        if [ -z "${!d}" ] && [ ! -d "${!d}" ]; then
+            abort "variable '$d' is empty or invalid"
+        fi
+    done
+
+    # directories owned by smog
+    for d in MDD SMOG PKG; do
+        if [ -z "$(ls -A ${!d})" ]; then
+            rm -rf "$ROOT/${!d}" && echo "removed directory '$ROOT/${!d}'"
+        else
+            echo "skipped non-empty '$ROOT/${!d}'"
+        fi
+    done
+
+    # remember: these can be shared with other programs
+    for d in LIB BIN; do
+        if [ -n "${!d}" ] && [ -d "${!d}" ] && [ -z "$(ls -A $ROOT/${!d})" ]; then
+            rm -rf "$ROOT/${!d}" && echo "removed directory '$ROOT/${!d}'"
+        else
+            echo "skipped non-empty '$ROOT/${!d}'"
+        fi
     done
 }
 
-repository_clone() {
-    cd "$ROOT/$SMOG"
-    echo -e "${BOLD}changed directory to '$ROOT/$SMOG'${CLEAR}"
-    echo
-
-    echo -e "cloning repository '$SMOG_REPO'$GREY"
-    $GIT clone --depth=1 -c advice.detachedHead=false -b "$REF" "$SMOG_REPO".git/ .
-    [ $? -ne 0 ] && abort
-    # get current head SHA if in branch mode
-    if [ "$MODE" == branch ]; then
-        SHA=$( $GIT log origin/"$REF" -1 --pretty=format:%H )
-    fi
-    $GIT checkout -b "$MASTERBRANCH" || abort
-    echo -e "$CLEAR"
-
-    mv -v "$BOOTSTRAP_PATH/$CONFIGSH" "$ROOT/$SMOG" || abort
-
-}
-
-# create metadata file for smog
-metadata_create() {
-    mkdir -vp "$ROOT/$MDD" || abort
-    local f="$ROOT/$MDD/smog"
-    touch "$f" || abort "failed to create metadata '$f'"
-
-    cat << EOF > "$f"
-url: $SMOG_REPO.git/
-path: $SMOGPKG
-mode: $MODE
-ref: $REF
-EOF
-    [ -n "$SHA" ] && echo "sha: $SHA" >> "$f"
-    echo "created metadata file '$f"
-    echo
-}
 
 bash_integrate() {
     [ -z "$BIN" ] && return
 
-    echo -n "symlink "
+    printf "symlink "
     ln -sv "$ROOT/$SMOG/smog" "$ROOT/$BIN/smog"
-    echo "smog: smog" >> "$ROOT/$MDD/smog.bin"
+    printf "smog: smog\n" > "$ROOT/$MDD/smog.bin"
+    printf "created metadata file '%s'\n\n" "$ROOT/$MDD/smog.bin"
 
     if [ -z "$BASHRC" ]; then
         echo "'\$BASHRC' is not defined, you can manually integrate smog to your bash:"
-        echo " -> update your \$PATH to include '$RAWROOT/$BIN'"
-        echo " -> source autocompletion script '$ROOT/$SMOG/bash-completion.sh'"
+        echo " -> update your PATH to include '$SMOGROOT/$BIN'"
+        echo " -> source autocompletion script '$SMOGROOT/$SMOG/$BASHCOMPL'"
         return
     fi
 
-    local changed=
+    local changed= line= export_path="export PATH=\"$SMOGROOT/$BIN:\$PATH\""
 
-    # check if bashrc already contains $PKG
+    # check if bashrc already contains $BIN
     if grep '^export PATH=' "$ROOT/$BASHRC" 2>/dev/null | grep -qE "/$BIN[:\"]"; then
         echo "seems like '$BASHRC' already contains path '$ROOT/$BIN'"
-    # put after last 'export PATH' or before first 'return'
+    # put after last 'export PATH...' line 
     else
-        local EXPORT_PATH="export PATH=\"$RAWROOT/$BIN:\$PATH\""
-        local line=$( grep -n '^export PATH' "$ROOT/$BASHRC" | tail -n1 | cut -d: -f1 )
-        if [ -n "$line" ] && [ "$line" -gt 0 ]; then
+        line=$( grep -n '^export PATH' "$ROOT/$BASHRC" 2>/dev/null | tail -1 | cut -sd: -f1 )
+        if [ "$line" -gt 0 2>/dev/null ]; then
             ((line++))
-            sed -i \'"$line" i "$EXPORT_PATH"\' "$ROOT/$BASHRC" \ &&
-            sed -i \'"$line" i "$EXPORT_PATH_COMMENT"\' "$ROOT/$BASHRC" \ &&
-            echo "updated \$PATH in '$ROOT/$BASHRC' at $line"
+            sed -i \'"$line" i "$export_path"\' "$ROOT/$BASHRC" 
+            sed -i \'"$line" i "$EXPORT_PATH_COMMENT"\' "$ROOT/$BASHRC"
+            echo "updated \$PATH in '$SMOGROOT/$BASHRC' at $line"
         else
-            echo "$EXPORT_PATH_COMMENT" >> "$ROOT/$BASHRC" \ &&
-            echo "$EXPORT_PATH" >> "$ROOT/$BASHRC" \ &&
-            echo "updated \$PATH in '$ROOT/$BASHRC'"
+            echo "$EXPORT_PATH_COMMENT" >> "$ROOT/$BASHRC"
+            echo "$export_path" >> "$ROOT/$BASHRC"
+            echo "updated \$PATH in '$SMOGROOT/$BASHRC'"
         fi
-        [ $? -eq 0 ] && changed=yes
+        changed=yes
     fi
 
+    local source_comp=". \"$SMOGROOT/$SMOG/$BASHCOMPL\""
+
     if complete -p > /dev/null 2>&1; then
-        local SOURCE_COMP=". \"$RAWROOT/$SMOG/bash-completion.sh\""
-        echo "$SOURCE_COMP_COMMENT" >> "$ROOT/$BASHRC" \ &&
-        echo "$SOURCE_COMP" >> "$ROOT/$BASHRC" \ &&
-        echo "added autocompletion script in '$ROOT/$BASHRC'" \ &&
+        echo "$SOURCE_COMP_COMMENT" >> "$ROOT/$BASHRC"
+        echo "$source_comp" >> "$ROOT/$BASHRC"
+        echo "added autocompletion script in '$SMOGROOT/$BASHRC'" \ &&
         changed=yes
     else
         echo "skipped autocompletion script: does your bash support it?"
     fi
 
     if [ -n $changed ]; then
-        echo -e "${BOLD}tip: run '. $BASHRC' to update your bash session${CLEAR}"
+        printf "%b" $BOLD
+        printf "tip: run '. %s' to update your bash session\n" "$BASHRC"
+        printf "%b" $CLEAR
     fi
     echo
+}
+
+# remove bootstrapper additions to bashrc
+bash_cleanup() {
+    [ -z "$BIN" ] && return
+
+    # remove symlink to smog
+    if [ -L "$ROOT/$BIN/smog" ] && [ "$(readlink "$ROOR/$BIN/smog")" == "$ROOT/$SMOG/smog" ]; then
+        unlnk "$ROOT/$BIN/smog"
+        echo "unlinked '$ROOT/$BIN/smog'"
+    fi
+
+    [ -z "$BASHRC" ] && return
+
+    # unexpanded ROOT
+    local root=$(grep '^ROOT=' "$ROOT/$SMOG/$CONFIG" | tail -1 | cut -sd= -f2- )
+    [ -z "$root" ] || root="$ROOT"
+
+    local line= rmbin=
+    # remove $BIN from $PATH
+    if [ ! -d "$ROOT/$BIN" ] || [ -z "$(ls -A $ROOT/$BIN)" ]; then
+        line=$(grep -n "^export PATH=\"$root/$BIN:\$PATH\"$" | tail -1 | cut -sd: -f1 )
+        if [ "$line" -gt 0 2>/dev/null ]; then
+           sed -i \'"$line" d\' "$ROOT/$BASHRC"
+           echo "removed \$BIN from \$PATH in '$root/$BASHRC' at $line"
+           rmbin=yes
+           ((line--))
+           # remove comment as well
+           if [ "$(head -$line $ROOT/$BASHRC | tail -1 )" == "$EXPORT_PATH_COMMENT" ]; then
+               sed -i \'"$line" d\' "$ROOT/$BASHRC"
+           fi
+        fi
+    fi
+
+    [ -z $rmbin ] && echo "\$BIN not removed from \$PATH in '$root/$BASHRC'"
+
+    [ complete -p > /dev/null 2>&1 ] || return
+
+    # remove autocomplete script
+    local source_comp=". \"$root/$SMOG/$BASHCOMPL\""
+    line=
+    line=$(grep -n "^$source_comp$" | tail -1 | cut -sd: -f1 )
+    if [ "$line" -gt 0 2>/dev/null ]; then
+        sed -i \'"$line" d\' "$ROOT/$BASHRC"
+        echo "removed autocompletion script in '$root/$BASHRC' at $line"
+        ((line--))
+        # remove comment
+        if [ "$(head -$line $ROOT/$BASHRC | tail -1 )" == "$SOURCE_COMP_COMMENT" ]; then
+            sed -i \'$line d\' "$ROOT/$BASHRC"
+        fi
+    fi
 }
 
 ldconf_integrate() {
     [ -z "$LIB" ] && return
 
     if [ -z "$LDSOCONF" ]; then
-        echo "'\$LDSOCONF' is not defined, but smog can link sharedlibs in '$ROOT/$LIB'"
+        echo "'\$LDSOCONF' unset, but smog can link sharedlibs in '$SMOGROOT/$LIB'"
         echo "you can manually configure ldconfig to cache this directory."
         return
     fi
 
-    echo "integrating '$ROOT/$LIB' to ldconfig.."
+    echo "integrating '$SMOGROOT/$LIB' to ldconfig"
 
     local fn=$(basename $LDSOCONF)
     local dest=$(dirname $LDSOCONF)
@@ -380,101 +439,119 @@ ldconf_integrate() {
     fi
 
     echo "$ROOT/$LIB" > $fn
+
+    # test if we have permission to write in $dest
     if ( >> "$dest/test" ) 2> /dev/null; then
         mv -v "$fn" "$dest"
     else
         echo "sudo required to create '$LDSOCONF'"
+        read -p 'continue? [y/N]: '
+        if [ "$REPLY" != y ] || [ "$REPLY" != yes ]; then
+            echo "you can manually configure ldconfig to cache '$SMOGROOT/$LIB'"
+            return
+        fi
         sudo mv -v "$fn" "$dest"
     fi
 
-    echo -e "${BOLD}tip: after running 'smog link PKG', run 'sudo ldconfig' to update cache${CLEAR}"
-    echo
+    if [ $? -eq 0 ]; then
+        printf "%b" $BOLD
+        printf "tip: after 'smog link PKG', run 'sudo ldconfig' to update ld cache"
+        printf "%b\n\n" $CLEAR
+    fi
+}
+
+ldcont_cleanup() {
+    [ -z "$LIB" ] || [ -z "$LDSOCONF" ] && return
+
+    if [ -d "$ROOT/$LIB" ] && [ -n "$(ld -A $ROOT/$LIB)" ]; then
+        echo "not removed '$LDSOCONF', since '$ROOT/$LIB' is not empty"
+        return
+    fi
+
+    if ! rm -v "$LDSOCONF" 2>/dev/null; then
+        echo "sudo required to remove '$LDSOCONF'"
+        read -p 'continue? [y/N]: '
+        if [ "$REPLY" == y ] || [ "$REPLY" == yes ]; then
+            sudo rm -v "$LDSOCONF"
+        fi
+    fi
 }
 
 bootstrap() {
-    prepare && configure && validate
+    BOOTSTRAP_PATH=$(mktemp -d /tmp/smogXXXX)
+    trap cleanup EXIT
+    cd "$BOOTSTRAP_PATH"
+    echo "changed directory '$BOOTSTRAP_PATH'"
 
-    filesystem_create && repository_clone && metadata_create
+    configure && validate
 
-    bash_integrate && ldconf_integrate
+    filesystem_create
+
+    bash_integrate
+    ldconf_integrate
 
     cleanup
+    trap -
 
-    echo -e "$BOLD"
-    echo "successfully bootstrapped smog!"
-    echo -en "$CLEAR"
+    printf "%b" $BOLD
+    printf "successfully bootstrapped smog\n"
+    printf "%b" $CLEAR
 
     echo " -> run 'smog sync smog' to check for new version of smog"
     echo " -> run 'smog update smog' to update smog to a new version"
+    echo " -> run 'bash bootstrap undo' to remove smog"
 }
 
 
 remove_pkgs() {
 
+    local -a pkgs=$( ./smog list | grep -v '^smog$' )
+
+    read -p "remove ${#pkgs[@]} smog packages? [y/N]"
+    [ "$REPLY" != y ] && [ "$REPLY" != yes ] && abort
+
     local pkg
-    local -i count=0
+    local -i count
 
-    echo "removing smog packages"
-    . ./util/md.sh || abort "can't source 'util/md.sh'"
-
-    for pkg in $(md_list); do
-        if [ "$pkg" != smog ]; then
-            # TODO requires to confirm (or implement -f)
-            md_links_exist "$pkg" && ./smog -f unlink "$pkg"
-            ./smog -f remove "$pkg"
-            echo " -> removed pkg '$pkg'"
-            ((count++))
-        fi
+    for pkg in "${pkgs[@]}"; do
+        ./smog remove "$pkg" -f && ((count++))
     done
-    echo "removed $count packages"
-    echo
+
+    printf "%b" $BOLD
+    printf "removed %d smog packages%b\n" "$count"
+    printf "&b" $CLEAR
 }
-undo() {
+
+
+unbootstrap() {
+
     ./smog version > /dev/null 2>&1 || abort "please run this script in smog directory"
     echo -en "$BOLD"
-    echo "WARNING: THIS WILL REMOVE SMOG *AND*"
-    echo " ALL PACKAGES YOU HAVE INSTALLED WITH SMOG"
-    echo " ALL METADATA FILES OF PACKAGES"
-    echo " ALL GIT REPOS THAT WERE CLONED"
-    echo " ALL SOURCE CODE CHANGES IN LOCAL BRANCHES"
-    echo " ALL SYMLINKS CREATED BY SMOG"
+    echo "WARNING: This will remove smog and"
+    echo " all packages you have created with smog"
+    echo " all package metadata"
+    echo " any local changes in package repositories"
+    echo " any symlinks created by smog"
     echo -e "$CLEAR"
     read -p "continue? [y/N]:"
     [ "$REPLY" == y ] || [ "$REPLY" == yes ] || abort
-    echo "type I AM ABSOLUTELY SURE if you are really sure:"
-    read
-    [ "$REPLY" == 'I AM ABSOLUTE SURE' ] || abort
+    read -p "type 'I am sure' to continue: "
+    [ "$REPLY" == 'I am sure' ] || abort
 
-    . ./config.sh || abort "can't source 'config.sh'"
-    # step 1: uninstall and unlink all pkgs
-    remove_pkgs || abort
+    . ./$CONFIG || abort "can't source '$CONFIG'"
+    # uninstall and unlink all pkgs
+    remove_pkgs
 
-    # step 2: remove smog directory
-    rm -rvf "$MDD" || abort
-    rm -rvf "$SMOG" || abort
+    # remove our traces in bash environment and ldconfig
+    bash_cleanup
+    ldconf_cleanup
 
-    # step 3: remove directories if defined in config and if empty
-    # (those are not necessarily owned by smog)
-    #for d in PKG BIN LIB
+    # step 2: remove filesystem
+    filesystem_remove
 
-
-}
-
-
-# outdates vars!!
-install() {
-
-    # create symlink to smog
-    mkdir -p $BIN
-    # TODO: HOME_DIR is not defined
-    ln -s $SMOG/smog $BIN/smog
-    echo "export PATH=\"${BIN}:\$PATH\"" >> $HOME/.bashrc
-
-    # create link to our libs
-    mkdir -p "$LIB"
-    # requires sudo
-    sudo mkdir -p "$LD_DIR"
-    sudo echo "$LIB" > "$LD_DIR/$LD_FILE"
+    printf "%b" $BOLD
+    printf "successfully removed smog from your system\n"
+    printf "%b" $CLEAR
 }
 
 # reject to run as root user
@@ -482,18 +559,16 @@ install() {
 [ $(id -u) -eq 0 ] 2>/dev/null && "you can't run this with sudo"
 
 case $1 in
-    help | -h | -help | --help )
+    help | -h | -help | --help | usage )
         usage ;;
     version )
         version ;;
     undo )
-        undo ;;
-    -s )
+        unbootstrap ;;
+    silent )
         INTERACTIVE=
         bootstrap ;;
-    '' )
-        bootstrap ;;
     * )
-        abort "invalid argument: $1" ;;
+        [ -z "$1" ] && bootstrap || abort "invalid argument: $1" ;;
 esac
     
