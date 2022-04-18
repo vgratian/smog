@@ -14,7 +14,7 @@ Meanwhile, I dislike `sudo make install`, especially for software that's not sta
 
 smog solves these issues by creating plain-text [metadata](#metadata) files for each _smog package_ and utilizing `git` with basic bash commands for maintaining them.
 
-smog is [configured](#configure) by a few bash variables and it manages each package in either _tage_ or _branch_ [mode](#modes).
+smog is [configured](#config) by a few bash variables and it manages each package in either _tage_ or _branch_ [mode](#modes).
 
 As a proof-of-concept, smog can manage itself as a _smog package_, meaning that you upgrade smog with the command `smog update smog`.
 
@@ -75,7 +75,7 @@ Edit `config.sh`: at the very least, you should make sure the following:
 * the directories `$BIN` and `$LIB` exist, or these variables are unset (`""`)
 
 Additionally, you might want to:
-* add [the autocompletion script](bash-autocomplete) to your `.bashrc`
+* add [the autocompletion script](bash-completion) to your `.bashrc`
 * update your `$PATH` to include the directory `$BIN` (if set)
 * update `ldconfig` to include the directory `$LIB` (if set)
 
@@ -84,13 +84,13 @@ Additionally, you might want to:
 For a comprehensive list of commands and options, simply run `smog help`. 
 
 ### Add and link a package
-Here is a typical example of using smog. First, I add dwm, my favorite window-manager:
+Here is a typical example of using smog. I add dwm, my favorite window-manager:
 
 ```bash
 smog add git://git.suckless.org/dwm
 ```
 
-Secondly, I want to build `dwm`. This is not done smog, and I'll do it myself:
+Secondly, I want to build `dwm`. This is not done by smog, so I'll do it myself:
 
 ```bash
 cd `smog path dwm`
@@ -111,13 +111,13 @@ Similarly, for a list of updatable packages, run `smog sync`. For a list of all 
 
 ### Remove a package
 
-To remove a package and all of its files, run `smog remove PKG`. If smog created symlinks for PKG, it will first unlink them, delete the local repostory and metadata file of the package.
+To remove a package and all of its files, run `smog remove PKG`. If smog created symlinks for PKG, it will first unlink them, delete the local repostory and the metadata file of the package.
 
 If you only want to remove symlinks of a package, run `smog unlink PKG`.
 
 ## Config
 
-smog is configured by a set of bash variables that are sourced from `config`. Default values are provided in [`config-def`](config-def).
+smog is configured by a set of bash variables that are sourced from the file `config`. Default values are provided in [`config-def`](config-def).
 
 
 | variable           | type           | description                                                                    |
@@ -128,7 +128,7 @@ smog is configured by a set of bash variables that are sourced from `config`. De
 | `BIN` (_optional_) | directory path | directory where symlinks are created to binaries and exectubles (when you run `smog link PKG`). |
 | `LIB` (_optional_) | directory path | directory where symlinks are created to shared libraries (when you run `smog link PKG`). |
 | `PKG`              | directory path | directory where repositories are cloned (when you run `smog add URL`). |
-| `SMOG`             | directory path | smog home directory - containing the source-code and `config.sh`.<br />if you bootstrapped smog, this directory is `$PKG/github.com/vgratian/smog`. |
+| `SMOG`             | directory path | smog home directory - containing the source-code and `config`.<br />if you bootstrapped smog, this directory is `$PKG/github.com/vgratian/smog`. |
 | `MDD`              | directory path | location of metadata files |
 | `LOCALBRANCH`     | string         | name of the local working branch - smog will create this branch after cloning a repostory, this helps to isolate your local changes from the upstream source code and update the repository smoothly.<br />note: avoid names that might conflict remote branch names, such as `master`, `main`. |
 | `NPROCS`           | integer        | number of processes when syncing packages (passed to `xargs`).<br />default is number of CPUs * 2, use `0` to run as many as possible.|
