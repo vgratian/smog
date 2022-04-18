@@ -56,7 +56,7 @@ rm bootstrap
 If you don't want to be asked too many questions, use the `-s` flag:
 
 ```bash
-bash bootstrap -s
+bash bootstrap silent
 ```
 
 ### Manual Installation

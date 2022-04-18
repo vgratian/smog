@@ -268,7 +268,7 @@ filesystem_create() {
 
     # create metadata directory and metadata file for smog
     mkdir -vp "$ROOT/$MDD"
-    local md=("url: $SMOGURL.git/" "path: $PKG" "mode: $MODE" "ref: $REF")
+    local md=("url: $SMOGURL.git/" "path: $SMOGHOST/$SMOGPATH" "mode: $MODE" "ref: $REF")
     [ $MODE == branch ] && md+=("sha: $SHA")
 
     printf '%s\n' "${md[@]}" > "$ROOT/$MDD/smog"
@@ -290,20 +290,19 @@ filesystem_remove() {
 
     # remove smog metadata (should be the only file in $MDD)
     rm -v "$ROOT/$MDD/smog"
-
-    # directories owned by smog
-    for d in MDD SMOG PKG; do
-        if [ -z "$(ls -A $ROOT/${!d})" ]; then
-            rm -rf "$ROOT/${!d}" && echo "removed directory '$ROOT/${!d}'"
-        else
-            echo "skipped non-empty '$ROOT/${!d}'"
-        fi
-    done
+    rm -vd "$ROOT/$MDD"
+    rm -rf "$ROOT/$SMOG" && echo "removed '$ROOT/$SMOG'"
+    if [ -z "$(ls -A $ROOT/$PKG)" ]; then
+        rm -vd "$ROOT/$PKG"
+    else
+        echo "skipped non-empty '$ROOT/$PKG'"
+    fi
 
     # remember: these can be shared with other programs
     for d in LIB BIN; do
-        if [ -n "${!d}" ] && [ -d "${!d}" ] && [ -z "$(ls -A $ROOT/${!d})" ]; then
-            rm -rf "$ROOT/${!d}" && echo "removed directory '$ROOT/${!d}'"
+        [ -z "${!d}" ] && continue
+        if [ ! -d "${!d}" ] || [ -z "$(ls -A $ROOT/${!d})" ]; then
+            rm -vd "$ROOT/${!d}"
         else
             echo "skipped non-empty '$ROOT/${!d}'"
         fi
@@ -386,7 +385,6 @@ bash_cleanup() {
     elif [ "${root::1}" == '"' ] && [ "${root: -1}" == '"' ]; then
         root="${root:1:-1}"
     fi
-    echo "root = [$root]"
 
     local line= rmbin=
     # remove $BIN from $PATH
@@ -501,7 +499,7 @@ bootstrap() {
     ldconf_integrate
 
     cleanup
-    trap -
+    trap - EXIT
 
     printf "%b" $BOLD
     printf "successfully bootstrapped smog\n"
