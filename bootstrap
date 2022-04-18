@@ -13,7 +13,7 @@ MODE=tag
 # it's also possible to bootstrap in branch mode, but highly discouraged
 # you could do that by uncommenting these two lines
 #REF=master
-#MODE=tag
+#MODE=branch
 
 SMOGHOST=github.com
 SMOGPATH=vgratian/smog

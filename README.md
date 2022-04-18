@@ -53,7 +53,7 @@ bash bootstrap
 rm bootstrap
 ```
 
-If you don't want to be asked too many questions, use the `-s` flag:
+If you don't want to be asked too many questions, use the `silent` argument:
 
 ```bash
 bash bootstrap silent
