@@ -8,10 +8,12 @@ set -e
 BOOTSTRAP=bootstrap
 
 # target smog version
-# REF=0.0.0
-# MODE=tag
-REF=master
+REF=0.0.0
 MODE=tag
+# it's also possible to bootstrap in branch mode, but highly discouraged
+# you could do that by uncommenting these two lines
+#REF=master
+#MODE=tag
 
 SMOGHOST=github.com
 SMOGPATH=vgratian/smog
@@ -121,7 +123,7 @@ cleanup() {
     # i'm paranoic
     [ "${BOOTSTRAP_PATH::5}" == /tmp/ ] && [ -d "$BOOTSTRAP_PATH" ] \
         && rm -rvf "$BOOTSTRAP_PATH"
-    printf "%b" $CLEAR
+    printf "%b\n" $CLEAR
 }
 
 # read default config and create a new config file
@@ -292,11 +294,7 @@ filesystem_remove() {
     rm -v "$ROOT/$MDD/smog"
     rm -vd "$ROOT/$MDD"
     rm -rf "$ROOT/$SMOG" && echo "removed '$ROOT/$SMOG'"
-    if [ -z "$(ls -A $ROOT/$PKG)" ]; then
-        rm -vd "$ROOT/$PKG"
-    else
-        echo "skipped non-empty '$ROOT/$PKG'"
-    fi
+    rm -rf "$ROOT/$PKG" && echo "removed '$ROOT/$PKG'"
 
     # remember: these can be shared with other programs
     for d in LIB BIN; do
