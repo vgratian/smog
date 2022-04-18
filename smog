@@ -157,13 +157,13 @@ _remove() {
         echo "cleaning up symlinks.."
 
         if md_links_load "$1" bin; then
-            links_remove bin "$BIN" "$path"
-            links_clean bin "$BIN" "$path"
+            links_remove bin "$ROOT/$BIN" "$ROOT/$PKG/$path"
+            links_clean bin "$ROOT/$BIN" "$ROOT/$PKG/$path"
         fi
 
         if md_links_load "$1" lib; then
-            links_remove lib "$LIB" "$path"
-            links_clean lib "$LIB" "$path"
+            links_remove lib "$ROOT/$LIB" "$path"
+            links_clean lib "$ROOT/$LIB" "$path"
         fi
 
         md_links_remove "$1"

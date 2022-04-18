@@ -48,7 +48,7 @@ This is the recommended way of installation. The bootstrapper will install and c
 Just download the bootstrapper script and run with bash:
 
 ```bash
-wget -nv https://raw.githubusercontent.com/vgratian/smog/master/bootstrab
+wget -nv https://raw.githubusercontent.com/vgratian/smog/master/bootstrap
 bash bootstrap
 rm bootstrap
 ```

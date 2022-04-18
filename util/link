@@ -19,17 +19,17 @@ links_create() {
         if [ -f "$dest/$linkname" ]; then
             if [ "$(readlink $dest/$linkname)" == "$root/$target" ]; then
                 printf "%-25s %-25s %s\n" "skipped (exists)" "$linkname" "$target"
-                ((skipped++))
+                ((skipped+=1))
             else
                 printf "%-25s %-25s %s\n" "skipped (conflic)" "$linkname" "$target"
-                ((conflicts++))
+                ((conflicts+=1))
             fi
             continue
         fi
 
-        ln -s "$root/$target" "$dest/$linkname" || abort
+        ln -s "$root/$target" "$dest/$linkname" 
         printf "%-25s %-25s %s\n" "created" "$linkname" "$target"
-        ((created++))
+        ((created+=1))
     done
 }
 
@@ -54,7 +54,7 @@ links_clean() {
         if [ ! ${targets[$target]+_} ] && [ ! -f "$targetp" ] ; then
             unlink "$dest/$linkname"
             printf "%-25s %-25s %s\n" "cleaned (deadlink)" "$linkname" "$target"
-            ((cleaned++))
+            ((cleaned+=1))
         fi
     done
 }
@@ -73,10 +73,10 @@ links_remove() {
             unlink "$dest/$linkname"
             targets[$target]=
             printf "%-25s %-25s %s\n" "removed" "$linkname" "$target"
-            ((removed++))
+            ((removed+=1))
         else
             printf "%-25s %-25s %s\n" "skipped (not found)" "$linkname" "$target"
-            ((skipped++))
+            ((skipped+=1))
         fi
     done
 }

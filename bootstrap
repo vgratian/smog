@@ -268,7 +268,7 @@ filesystem_create() {
 
     # create metadata directory and metadata file for smog
     mkdir -vp "$ROOT/$MDD"
-    local md=("url: $SMOGURL.git/" "path: $SMOGPKG" "mode: $MODE" "ref: $REF")
+    local md=("url: $SMOGURL.git/" "path: $PKG" "mode: $MODE" "ref: $REF")
     [ $MODE == branch ] && md+=("sha: $SHA")
 
     printf '%s\n' "${md[@]}" > "$ROOT/$MDD/smog"
@@ -288,9 +288,12 @@ filesystem_remove() {
         fi
     done
 
+    # remove smog metadata (should be the only file in $MDD)
+    rm -v "$ROOT/$MDD/smog"
+
     # directories owned by smog
     for d in MDD SMOG PKG; do
-        if [ -z "$(ls -A ${!d})" ]; then
+        if [ -z "$(ls -A $ROOT/${!d})" ]; then
             rm -rf "$ROOT/${!d}" && echo "removed directory '$ROOT/${!d}'"
         else
             echo "skipped non-empty '$ROOT/${!d}'"
@@ -332,7 +335,7 @@ bash_integrate() {
     else
         line=$( grep -n '^export PATH' "$ROOT/$BASHRC" 2>/dev/null | tail -1 | cut -sd: -f1 )
         if [ "$line" -gt 0 2>/dev/null ]; then
-            ((line++))
+            ((line+=1))
             sed -i \'"$line" i "$export_path"\' "$ROOT/$BASHRC" 
             sed -i \'"$line" i "$EXPORT_PATH_COMMENT"\' "$ROOT/$BASHRC"
             echo "updated \$PATH in '$SMOGROOT/$BASHRC' at $line"
@@ -368,48 +371,55 @@ bash_cleanup() {
     [ -z "$BIN" ] && return
 
     # remove symlink to smog
-    if [ -L "$ROOT/$BIN/smog" ] && [ "$(readlink "$ROOR/$BIN/smog")" == "$ROOT/$SMOG/smog" ]; then
-        unlnk "$ROOT/$BIN/smog"
+    if [ -L "$ROOT/$BIN/smog" ] && [ "$(readlink "$ROOT/$BIN/smog")" == "$ROOT/$SMOG/smog" ]; then
+        unlink "$ROOT/$BIN/smog"
         echo "unlinked '$ROOT/$BIN/smog'"
+	rm -vf "$ROOT/$MDD/smog.bin"
     fi
 
     [ -z "$BASHRC" ] && return
 
     # unexpanded ROOT
     local root=$(grep '^ROOT=' "$ROOT/$SMOG/$CONFIG" | tail -1 | cut -sd= -f2- )
-    [ -z "$root" ] || root="$ROOT"
+    if [ -z "$root" ]; then
+        root="$ROOT"
+    elif [ "${root::1}" == '"' ] && [ "${root: -1}" == '"' ]; then
+        root="${root:1:-1}"
+    fi
+    echo "root = [$root]"
 
     local line= rmbin=
     # remove $BIN from $PATH
-    if [ ! -d "$ROOT/$BIN" ] || [ -z "$(ls -A $ROOT/$BIN)" ]; then
-        line=$(grep -n "^export PATH=\"$root/$BIN:\$PATH\"$" | tail -1 | cut -sd: -f1 )
+    if [ -d "$ROOT/$BIN" ] && [ -n "$(ls -A $ROOT/$BIN)" ]; then
+        echo "directory '$root/$BIN' not empty"
+    else
+        line=$(grep -n "^export PATH=\"$root/$BIN:\$PATH\"$" "$ROOT/$BASHRC" | tail -1 | cut -sd: -f1 )
         if [ "$line" -gt 0 2>/dev/null ]; then
-           sed -i \'"$line" d\' "$ROOT/$BASHRC"
+           sed -i "$line d" "$ROOT/$BASHRC" && rmbin=yes
            echo "removed \$BIN from \$PATH in '$root/$BASHRC' at $line"
-           rmbin=yes
            ((line--))
            # remove comment as well
            if [ "$(head -$line $ROOT/$BASHRC | tail -1 )" == "$EXPORT_PATH_COMMENT" ]; then
-               sed -i \'"$line" d\' "$ROOT/$BASHRC"
+               sed -i "$line d" "$ROOT/$BASHRC"
            fi
         fi
     fi
 
-    [ -z $rmbin ] && echo "\$BIN not removed from \$PATH in '$root/$BASHRC'"
+    [ -z $rmbin ] && echo "did not remove \$BIN from \$PATH in '$root/$BASHRC'"
 
-    [ complete -p > /dev/null 2>&1 ] || return
+    complete -p > /dev/null 2>&1 || return 0
 
     # remove autocomplete script
     local source_comp=". \"$root/$SMOG/$BASHCOMPL\""
     line=
-    line=$(grep -n "^$source_comp$" | tail -1 | cut -sd: -f1 )
+    line=$(grep -n "^$source_comp$" "$ROOT/$BASHRC" | tail -1 | cut -sd: -f1 )
     if [ "$line" -gt 0 2>/dev/null ]; then
-        sed -i \'"$line" d\' "$ROOT/$BASHRC"
+        sed -i "$line d" "$ROOT/$BASHRC"
         echo "removed autocompletion script in '$root/$BASHRC' at $line"
         ((line--))
         # remove comment
         if [ "$(head -$line $ROOT/$BASHRC | tail -1 )" == "$SOURCE_COMP_COMMENT" ]; then
-            sed -i \'$line d\' "$ROOT/$BASHRC"
+            sed -i "$line d" "$ROOT/$BASHRC"
         fi
     fi
 }
@@ -446,7 +456,7 @@ ldconf_integrate() {
     else
         echo "sudo required to create '$LDSOCONF'"
         read -p 'continue? [y/N]: '
-        if [ "$REPLY" != y ] || [ "$REPLY" != yes ]; then
+        if [ "$REPLY" != y ] && [ "$REPLY" != yes ]; then
             echo "you can manually configure ldconfig to cache '$SMOGROOT/$LIB'"
             return
         fi
@@ -460,10 +470,10 @@ ldconf_integrate() {
     fi
 }
 
-ldcont_cleanup() {
+ldconf_cleanup() {
     [ -z "$LIB" ] || [ -z "$LDSOCONF" ] && return
 
-    if [ -d "$ROOT/$LIB" ] && [ -n "$(ld -A $ROOT/$LIB)" ]; then
+    if [ -d "$ROOT/$LIB" ] && [ -n "$(ls -A $ROOT/$LIB)" ]; then
         echo "not removed '$LDSOCONF', since '$ROOT/$LIB' is not empty"
         return
     fi
@@ -504,22 +514,22 @@ bootstrap() {
 
 
 remove_pkgs() {
-
     local -a pkgs=$( ./smog list | grep -v '^smog$' )
+    [ -z "${pkgs[0]}" ] && return
 
-    read -p "remove ${#pkgs[@]} smog packages? [y/N]"
+    read -p "remove ${#pkgs[@]} smog package(s)? [y/N]: "
     [ "$REPLY" != y ] && [ "$REPLY" != yes ] && abort
 
     local pkg
     local -i count
 
     for pkg in "${pkgs[@]}"; do
-        ./smog remove "$pkg" -f && ((count++))
+        ./smog remove "$pkg" -f && ((count+=1))
     done
 
     printf "%b" $BOLD
-    printf "removed %d smog packages%b\n" "$count"
-    printf "&b" $CLEAR
+    printf "removed %d smog packages\n\n" "$count"
+    printf "%b" $CLEAR
 }
 
 
@@ -533,7 +543,7 @@ unbootstrap() {
     echo " any local changes in package repositories"
     echo " any symlinks created by smog"
     echo -e "$CLEAR"
-    read -p "continue? [y/N]:"
+    read -p "continue? [y/N]: "
     [ "$REPLY" == y ] || [ "$REPLY" == yes ] || abort
     read -p "type 'I am sure' to continue: "
     [ "$REPLY" == 'I am sure' ] || abort
@@ -546,7 +556,7 @@ unbootstrap() {
     bash_cleanup
     ldconf_cleanup
 
-    # step 2: remove filesystem
+    # remove files and directories created by bootstrap
     filesystem_remove
 
     printf "%b" $BOLD
