@@ -137,6 +137,36 @@ _path() {
     grep '^path: ' "$ROOT/$MDD/$1" | cut -d' ' -f2-
 }
 
+# Change or display metadata values
+# Arguments: pkg key=[value]
+_set() {
+    local -A md
+    md_load "$1" || abort "package '$1' does not exist"
+
+    local key val
+    read -r key val <<< $(echo "$2" | sed -E 's|^(\w+)=?(.*)$|\1 \2|')
+
+    if [ -z "$val" ]; then
+        echo "$key = ${md[$key]}"
+        return
+    fi
+
+    # TODO: check for quotes?
+
+    echo "$key = $val"
+
+    if [ ! ${OPTS[force]+_} ]; then
+        if [ ${md[$key]+_} ]; then
+            ask "overwrite [${md[$key]}] with [$val]?" || return
+        else
+            ask "store value [$val]?" || return
+        fi
+    fi
+
+    md["$key"]="$val"
+    md_dump $1
+}
+
 # Remove package, i.e. remove local repository, metadata file
 # and symbolic links (if any).
 _remove() {
