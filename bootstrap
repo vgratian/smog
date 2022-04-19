@@ -393,7 +393,7 @@ bash_cleanup() {
         if [ "$line" -gt 0 2>/dev/null ]; then
            sed -i "$line d" "$ROOT/$BASHRC" && rmbin=yes
            echo "removed \$BIN from \$PATH in '$root/$BASHRC' at $line"
-           ((line--))
+           ((line-=1))
            # remove comment as well
            if [ "$(head -$line $ROOT/$BASHRC | tail -1 )" == "$EXPORT_PATH_COMMENT" ]; then
                sed -i "$line d" "$ROOT/$BASHRC"
@@ -412,7 +412,7 @@ bash_cleanup() {
     if [ "$line" -gt 0 2>/dev/null ]; then
         sed -i "$line d" "$ROOT/$BASHRC"
         echo "removed autocompletion script in '$root/$BASHRC' at $line"
-        ((line--))
+        ((line-=1))
         # remove comment
         if [ "$(head -$line $ROOT/$BASHRC | tail -1 )" == "$SOURCE_COMP_COMMENT" ]; then
             sed -i "$line d" "$ROOT/$BASHRC"

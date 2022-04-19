@@ -7,28 +7,28 @@
 * easily check for remote updates
 * easily update while maintaining my local changes
 
-Meanwhile, I dislike `sudo make install`, especially for software that's not stable or I don't fully trust. Therefore, additionally, I wanted the tool to be able to:
+Meanwhile, I dislike `sudo make install`, especially for packages that're not stable or I don't fully trust. So, additionally, I wanted the tool to:
 * create symlinks to binaries and add to my `PATH`
 * create symlinks to ELF libraries and enable `ldconfig` to cache them
-* and abviously: easily cleanup these symlinks and remove the repository.
 
-smog solves these issues by creating plain-text [metadata](#metadata) files for each _smog package_ and utilizing `git` with basic bash commands for maintaining them.
+and abviously:
+* easily cleanup and remove packages.
 
-smog is [configured](#config) by a few bash variables and it manages each package in either _tage_ or _branch_ [mode](#modes).
+smog solves these issues by creating plain-text [metadata](#metadata) files for each repository you clone, and by employing `git` + basic bash commands for maintaining them.
 
-As a proof-of-concept, smog can manage itself as a _smog package_, meaning that you upgrade smog with the command `smog update smog`.
+smog is [configured](#config) by a few bash variables and it manages each repository (_smog package_) in either _tage_ or _branch_ [mode](#modes). If you run the [bootstrapper](#bootstrapping) to install smog, it will manage itself as a "smog package", meaning that you upgrade smog with the command `smog update smog`.
 
 ## Features
 
 smog is best described by its main commands:
 
-* `smog add URL` - clones a git repository and creates package metadata
-* `smog show PKG` - shows metadata of a package
-* `smog path PKG` - prints path of the local repository 
-* `smog list` - lists all packages
-* `smog sync` - lists all packages that have remote updates
-* `smog update PKG` - updates local repository with remote changes
-* `smog link PKG` - scans for binaries, executables and sharedlibs and creates symbolic links in the directories `$BIN` and `$LIB`
+* `smog add URL` - clone a git repository and creates package metadata
+* `smog show PKG` - show metadata of a package
+* `smog path PKG` - print path of the local repository 
+* `smog list` - list all packages
+* `smog sync` - list all packages that have remote updates
+* `smog update PKG` - update local repository with remote changes
+* `smog link PKG` - scan for binaries, executables and sharedlibs and create symlinks.
 
 ## Installation
 
@@ -59,12 +59,20 @@ If you don't want to be asked too many questions, use the `silent` argument:
 bash bootstrap silent
 ```
 
-### Manual Installation
-
-Clone the respository in a location of your choice and copy the default config file to `config.sh`:
+You can also safely remove smog with the bootstrapper:
 
 ```bash
-git clone https://github.com/vgratian/smog
+bash bootstrap undo
+```
+
+Note that you can not run the bootstrapper as a priviliged user!
+
+### Manual Installation
+
+Clone the latest tag in a location of your choice and copy the default config file to `config`:
+
+```bash
+git clone -b 0.0.0 https://github.com/vgratian/smog
 cd smog
 cp config-def config
 ```
@@ -79,28 +87,35 @@ Additionally, you might want to:
 * update your `$PATH` to include the directory `$BIN` (if set)
 * update `ldconfig` to include the directory `$LIB` (if set)
 
+Note that in this case, smog is not a package of itself, and you have to update it manually with git as well.
+
 ## Usage
 
-For a comprehensive list of commands and options, simply run `smog help`. 
+For a comprehensive list of commands and options, simply run `smog help`.
 
-### Add and link a package
+### Examples
+
+#### Add and link a package
 Here is a typical example of using smog. I add dwm, my favorite window-manager:
 
 ```bash
 smog add git://git.suckless.org/dwm
 ```
 
-Secondly, I want to build `dwm`. This is not done by smog, so I'll do it myself:
+Very often I will edit the source-code and then build the package. I can do this safely, since smog created a local working branch in the previous step and they will not be lost when I update `dwm`.
 
 ```bash
 cd `smog path dwm`
-make dwm
+vim dwm.c  # modified the source code
+make dwm   # build the package myself
 ```
 
-Finallly, I want to add the binary `dwm` to my `PATH`, and I do this with smog:
+Now back to smog, I want to add the binary `dwm` to my `PATH`:
 ```bash
 smog link dwm
 ```
+
+(If smog detects more binaries in the repostory, it will ask if you want all of them to be linked).
 
 ### Query packages
 
@@ -124,16 +139,16 @@ smog is configured by a set of bash variables that are sourced from the file `co
 |--------------------|----------------|--------------------------------------------------------------------------------|
 | `GIT`              | command name   | git command invoked to clone, manage and query git repositories.<br />normally this is just `git`, I use Void's `chroot-git`. |
 | `EDITOR`           | command name   | text editor to allow user to modify a generated list.<br />default is `vim`, but you shoud be able to use `vi`, `nano` or a GUI text editor. |
-| `ROOT`             | directory path | The parent of the directories that smog operates on (described below).<br />this can't be empty, should be writable and is normally `$HOME`.<br />allows you to chroot or sandbox smog.|
-| `BIN` (_optional_) | directory path | directory where symlinks are created to binaries and exectubles (when you run `smog link PKG`). |
-| `LIB` (_optional_) | directory path | directory where symlinks are created to shared libraries (when you run `smog link PKG`). |
-| `PKG`              | directory path | directory where repositories are cloned (when you run `smog add URL`). |
-| `SMOG`             | directory path | smog home directory - containing the source-code and `config`.<br />if you bootstrapped smog, this directory is `$PKG/github.com/vgratian/smog`. |
-| `MDD`              | directory path | location of metadata files |
+| `ROOT`             | absolute path | The parent of the directories that smog operates on (described below).<br />this can't be empty, should be writable and is normally `$HOME`.<br />allows you to chroot or sandbox smog.|
+| `BIN` (_optional_) | path in $ROOT | directory where symlinks are created to binaries and exectubles (when you run `smog link PKG`). |
+| `LIB` (_optional_) | path in $ROOT | directory where symlinks are created to shared libraries (when you run `smog link PKG`). |
+| `PKG`              | path in $ROOT | directory where repositories are cloned (when you run `smog add URL`). |
+| `SMOG`             | path in $ROOT | smog home directory - containing the source-code and `config`.<br />if you bootstrapped smog, this directory is `$PKG/github.com/vgratian/smog`. |
+| `MDD`              | path in $ROOT | location of metadata files |
 | `LOCALBRANCH`     | string         | name of the local working branch - smog will create this branch after cloning a repostory, this helps to isolate your local changes from the upstream source code and update the repository smoothly.<br />note: avoid names that might conflict remote branch names, such as `master`, `main`. |
 | `NPROCS`           | integer        | number of processes when syncing packages (passed to `xargs`).<br />default is number of CPUs * 2, use `0` to run as many as possible.|
-| `BASHRC` (_optional_)   | file path      | _only used for bootstrapping:_<br />if not empty, the bootstrapper will edit `$BASHRC` to:<ul><li>add `$BIN` to your `$PATH`</li><li>add [the autocompletion script](bash-autocomplete)</li></ul>|
-| `LDSOCONF` (_optional_) | file path      | _only used for bootstrapping:_<br />if not empty and if `$LIB` is defined, the bootstrapper will, create a config file for `ldconfig` allowing it to cache sharedlibs in _smog packages_.<br />note: this is normally in `/etc/ld.so.conf.d/` and the bootstrapper might ask for sudo to create `LDSOCONF`. |
+| `BASHRC` (_optional_)   | path in $ROOT      | _only used for bootstrapping:_<br />if not empty, the bootstrapper will edit `$BASHRC` to:<ul><li>add `$BIN` to your `$PATH`</li><li>add [the autocompletion script](bash-completion)</li></ul>|
+| `LDSOCONF` (_optional_) | absolute path      | _only used for bootstrapping:_<br />if not empty and if `$LIB` is defined, the bootstrapper will, create a config file for `ldconfig` allowing it to cache sharedlibs in _smog packages_.<br />note: this is normally in `/etc/ld.so.conf.d/` and the bootstrapper might ask for sudo to create `LDSOCONF`. |
 
 ## Modes
 Each  _smog package_, a.k.a. your local repository, is associated with a remote git [reference](https://git-scm.com/book/en/v2/Git-Internals-Git-References): either _tag_ or _branch_. This decides how the package is updated:
