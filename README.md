@@ -16,7 +16,7 @@ and abviously:
 
 smog solves these issues by creating plain-text [metadata](#metadata) files for each repository you clone, and by employing `git` + basic bash commands for maintaining them.
 
-smog is [configured](#config) by a few bash variables and it manages each repository (_smog package_) in either _tage_ or _branch_ [mode](#modes). If you run the [bootstrapper](#bootstrapping) to install smog, it will manage itself as a "smog package", meaning that you upgrade smog with the command `smog update smog`.
+smog is [configured](#config) by a few bash variables and it manages each repository (_smog package_) in either _tag_ or _branch_ [mode](#modes). If you run the [bootstrapper](#bootstrapping) to install smog, it will manage itself as a "smog package", meaning that you upgrade smog with the command `smog update smog`.
 
 ## Features
 
@@ -29,6 +29,8 @@ smog is best described by its main commands:
 * `smog sync` - list all packages that have remote updates
 * `smog update PKG` - update local repository with remote changes
 * `smog link PKG` - scan for binaries, executables and sharedlibs and create symlinks.
+
+smog is trying to be easily combined and piped with other bash commands.
 
 ## Installation
 
@@ -65,8 +67,6 @@ You can also safely remove smog with the bootstrapper:
 bash bootstrap undo
 ```
 
-Note that you can not run the bootstrapper as a priviliged user!
-
 ### Manual Installation
 
 Clone the latest tag in a location of your choice and copy the default config file to `config`:
@@ -77,7 +77,7 @@ cd smog
 cp config-def config
 ```
 
-Edit `config.sh`: at the very least, you should make sure the following:
+Edit `config`: at the very least, you should make sure the following:
 * `$SMOG` matches the the directory where smog is cloned
 * the directories `$PKG` and `$MDD` exist and are empty
 * the directories `$BIN` and `$LIB` exist, or these variables are unset (`""`)
@@ -102,7 +102,7 @@ Here is a typical example of using smog. I add dwm, my favorite window-manager:
 smog add git://git.suckless.org/dwm
 ```
 
-Very often I will edit the source-code and then build the package. I can do this safely, since smog created a local working branch in the previous step and they will not be lost when I update `dwm`.
+Very often I will edit the source-code and then build the package. This is the part that I do myself:
 
 ```bash
 cd `smog path dwm`
@@ -110,7 +110,7 @@ vim dwm.c  # modified the source code
 make dwm   # build the package myself
 ```
 
-Now back to smog, I want to add the binary `dwm` to my `PATH`:
+Finally, I want to add the binary `dwm` to my `PATH`:
 ```bash
 smog link dwm
 ```
