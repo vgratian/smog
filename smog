@@ -2,15 +2,16 @@
 
 set -e 
 
-readonly NAME=$(basename $0)
+readonly PROGRAM=$(basename $0)
 readonly VERSION='0.0.0'
+readonly HOMEURL='https://github.com/vgratian/smog'
 
 _version() {
-    echo "${NAME} v${VERSION}"
+    echo "$PROGRAM v$VERSION"
 }
 
 _usage() {
-    echo "Usage: $NAME COMMAND [ARG] [OPTIONS]"
+    echo "Usage: $PROGRAM command [arg] [options]"
 }
 
 _help() {
@@ -19,79 +20,72 @@ _help() {
 
 Commands:
     list          List all local packages
-    add <URL>     Create new package from a git URL
-    remove <PKG>  Remove PKG and all of its files
-    show <PKG>    Show PKG metadata
-    path <PKG>    Print absolute path of local repository
-    sync [<PKG>]  Sync PKG (or *all* packages with no argument),
-                  i.e. check for updates in the remote repository
-    update <PKG>  Update package PKG, see 'Modes' for details.
-    link <PKG>    Create symlinks for binaries and libs in the
-                  local repostory
-    unlink <PKG>  Remove and clean-up symlinks
+    add URL       Create new package from a git URL
+    remove PKG    Remove package
+    show PKG      Show package metadata
+    path PKG      Show path of local repository
+    sync [PKG]    Check for updates in remote repositories
+    update PKG    Update local repository with remote changes
+    link PKG      Create symlinks for executables and ELF libs
+    unlink PKG    Remove symlinks
 
     version       Print version and exit
     help          Print this message
 
-Options:
-    -t            Run in tag-mode (normally the default)
-    -b            Run in branch-mode
-    -f            Force (don't ask anything to confirm)
-    -r            Run recursively in all subdirectories (for 'link')
-    -m            When listing or syncing packages, show more details
-                  and decoratations
+Run '$PROGRAM help COMMAND' for more details and options.
 
-    -T  <TAG>     Use tag TAG only (valid for 'add' and 'update')
-    -B  <BRANCH>  Use branch BRANCH (valid for 'add' and 'update')
-    -r  <dir>     Scan DIR instead of root directory of package (for 'link')
+Common options:
+    -m            Show more details or decorations
+    -f            Ask less confirmation
+    -t            Prefer tag-mode (normally the default)
+    -b            Prefer branch-mode
+    -T TAG        Use tag 'TAG' only
+    -B BRANCH     Use branch 'BRANCH'
 
-Modes:
-    Smog links each local package to a remote git "ref", this is either
-    a tag or branch, hence the two modes.
-
-    * tag mode *
-    A package is created by cloning a git tag. When updating, 
-    Smog searches for a tag that is more recent than the local
-    one and merges your local branch to the new tag.
-    This is always the preferred mode.
-
-    * Branch-mode *
-    A package is created by cloning a git branch. When updating,
-    Smog checks for new commits on the remote branch and merges
-    those to your local branch.
-
-    In both cases, Smog always creates a *local working branch*,
-    which will contain your local changes, and the original branch
-    or tag will be kept clean.
+More documentation, report bugs or requests:
+    $HOMEURL
 EOF
 }
 
 
-# ----- helper functions ----- #
+# ----------------  helper functions  ----------------- #
 
-# Exit program with optional error message
+# exit program with optional error message
 abort() {
     [ -n "$1" ] && echo "$1" >&2
     exit 1
 }
 
-# Ask user and read yes/no answer.
-# Default answer is always 'no'.
+# ask user and read binary answer (default: no)
 ask() {
     read -p "${1:-proceed?} [y/N]: "
     [ "$REPLY" == y ] || [ "$REPLY" == yes ]
 }
 
-# -------- command functions  -------- #
-# prefixed with '_' to avoid collision
-# or confusion with bash commands.
+# ----------------  command functions  ---------------- #
+# prefixed with '_' to avoid confusion with bash commands
 
-# Decorated list of packages. Print name, current head and URL.
-_listmore() {
+# each command has to have a help/usage function as well!
+
+_list_help() {
+    cat << EOF
+Show a plain list of installed packages.
+
+usage: smog list [-m]
+
+options:
+    -m      decorate list and add some basic info
+EOF
+}
+_list() {
+    # plain list
+    [ ${OPTS[more]+_} ] || { md_list; return; }
+
+    # decorated list (name, mode + current head, git url)
+    printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "url" $CLEAR
+    
     local pkg
     local -A md
-
-    printf "%b%-30s %-20s %s%b\n" $BOLD "package" "remote ref" "url" $CLEAR
 
     for pkg in $(md_list); do
         md=()
@@ -101,44 +95,86 @@ _listmore() {
     done
 }
 
-# Raw list of packages
-_list() {
-    [ ${OPTS[more]+_} ] && _listmore || md_list
-}
+_show_help() {
+    cat << EOF
+Show metadata fields of a package.
 
-# Show decorated metadata of package
-_showmore() {
+usage: smog show PKG [-m]
+
+argument:
+    PKG     name of the package
+
+options:
+    -m      decorate and show more details    
+EOF
+}
+_show() {
+    md_exists "$1" || abort "package '$1' does not exist"
+
+    # plain metadata
+    [ ${OPTS[more]+_} ] || { cat "$ROOT/$MDD/$1"; return; }
+
+    # decorated metadata
+    printf "%b%-30s %s%b\n" "$BOLD" "package" "$1" "$CLEAR"
+
     local -A md
     local key
 
-    md_load "$1" || abort "package '$1' does not exist"
+    md_load "$1"
 
-    printf "%b%-30s %s%b\n" "$BOLD" "package" "$1" "$CLEAR"
-
-    for key in ${!md[@]}; do printf "%-30s " "$key"; echo ${md[$key]}; done
+    for key in ${!md[@]}; do
+        printf "%-30s " "$key"
+        echo "${md[$key]}"
+    done
 
     # number of symlinks
-    printf "%b" $GREY
-    printf "%-30s %d bins and %d libs\n" "links" \
+    printf "%b%-30s %d bins and %d libs\n" "$GREY" "links" \
         $( cat "$ROOT/$MDD/$1"{.bin,.lib} 2> /dev/null | wc -l )
-    printf "%b" $CLEAR
+    printf "%b" "$CLEAR"
 }
 
-# Show raw metadata of package
-_show() {
-    [ ${OPTS[more]+_} ] && _showmore "$1" || cat "$ROOT/$MDD/$1"
+_path_help() {
+    cat << EOF
+Print full path of the package repository.
+Useful to quickly change directory, e.g.:
+    $ cd \`smog path PKG\`
+
+usage: smog path PKG
+
+argument:
+    PKG     name of the package
+EOF
 }
 
-# Print path of local repository. Useful to quickly
-# change directory. E.g., run "cd `smog path PKG`".
 _path() {
     md_exists "$1" || abort "package '$1' does not exist"
     echo -n "$ROOT/$PKG/"
     grep '^path: ' "$ROOT/$MDD/$1" | cut -d' ' -f2-
 }
 
-# Change or display metadata values
-# Arguments: pkg key=[value]
+_set_help() {
+    cat << EOF
+Set or display metadata fields. this command is
+for the advanced user, only use if you are sure
+what you are doing.
+
+usage: smog set PKG KEY[=VALUE] [-f]
+
+arguments:
+    PKG     name of the package
+    KEY     metadata field key
+    VALUE   metadata field value
+
+option:
+    -f      don't ask for confirmation
+
+examples:
+    * show value of 'buildcmd':
+        $ smog set dwm buildcmd
+    * set value of 'buildcmd':
+        $ smog set dwm buildcmd='make clean && make'
+EOF
+}
 _set() {
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
@@ -167,10 +203,21 @@ _set() {
     md_dump $1
 }
 
-# Remove package, i.e. remove local repository, metadata file
-# and symbolic links (if any).
-_remove() {
+_remove_help() {
+    cat << EOF
+Remove package, i.e. delete repository, metadata
+and links.
 
+usage: smog remove PKG [-f]
+
+arguments:
+    PKG     name of the package
+
+option:
+    -f      don't ask for confirmation
+EOF
+}
+_remove() {
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
    
@@ -213,9 +260,18 @@ _remove() {
     echo -e "${BOLD}package '$1' removed${CLEAR}"
 }
 
+_check_help() {
+    cat << EOF
+Check if a package can be added for the given git URL,
+this command is for debugging, and might be removed
+in the future.
 
-# Check the URL is valid and check available git refs (tags/branches).
-# This is like 'add' but without creating a local package.
+usage: smog check URL [-ftb] [-T TAG] [-B BRANCH] 
+
+See 'smog add' for arguments and options.
+EOF
+}
+
 _check() {
     local pkg path url="$1"
 
@@ -236,8 +292,28 @@ _check() {
     for r in "${refsarr[@]}"; do echo "  * $r"; done
 }
 
-# Add a repository, i.e. check for available refs (tags or branches),
-# then clone the repository and create metadata file.
+_add_help() {
+    cat << EOF
+Create a smog package for the given git URL,
+i.e. clone repository and create metadata file.
+
+usage: smog add URL [-ftb] [-T TAG] [-B BRANCH] 
+
+argument:
+    URL     a valid git URL
+
+options:
+    -f          don't ask for confirmation
+    -t          add package in tag-mode
+    -b          add package in branch-mode
+    -T TAG      use specifically tag TAG
+    -B BRANCH   use specifically branch BRANCH
+
+If no preference is given, smog will try first to
+clone a tag, and only if no tags are available,
+suggest to clone a branch.
+EOF
+}
 _add() {
 
     local pkg path url="$1"
@@ -325,9 +401,28 @@ _add() {
     echo -e "${BOLD}package '$pkg' created${CLEAR}"
 }
 
-# Sync package(s) with upstream repository. With no argument, all packages
-# are synced, otherwise only given packages is synced.
-# When all packages are synced, this function calls itself concurrently.
+_sync_help() {
+    cat << EOF
+Sync package(s) with upstream repository and list
+package(s) for which updates are available.
+
+With no argument, all packages are synced, otherwise
+only the named package.
+
+usage: smog sync [PKG] [-m] 
+
+argument:
+    PKG     only sync package PKG
+
+options:
+    -m      list all packages and show detailed
+            status (by default only updatable
+            package are listed with no info)    
+
+metadata:
+    tag_pattern: (tag-mode) only consider matching tags 
+EOF
+}
 _sync() {
 
     if [ ${OPTS[more]+_} ] && [ ! ${OPTS[no_header]+_} ]; then
@@ -345,11 +440,31 @@ _sync() {
     [ ${OPTS[more]+_} ] && printf "\nsyncing complete!\n"
 }
 
-# updates a package repository:
-# - in branch mode: just update to the latest commits
-# - in tag mode: fetch and switch to the newer tag
-# if the 'force' option is set, will try to merge any
-# local changes before merging.
+_update_help() {
+    cat << EOF
+Update local repository with upstream.
+
+usage: smog update PKG [-f] [-T TAG]
+
+argument:
+    PKG         package to update
+
+options:
+    -f          don't ask for confirmation to commit
+                unstaged local changes
+    -T TAG      (tag-mode) update to tag TAG
+
+metadata:
+    tag_pattern: (tag-mode) only consider matching tags 
+
+The local repository is updated in three steps:
+    1. if there are unstaged changes in '\$LOCALBRANCH',
+    commit those changes
+    2. fetch updates (in branch mode: the latest commits,
+    in tag mode: a more recent tag)
+    3. merge updates into '\$LOCALBRANCH'
+EOF
+}
 _update() {
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
@@ -399,7 +514,7 @@ _update() {
         echo -en "$GREY"
         # TODO: something better than 'add .'
         $GIT add . || abort
-        $GIT commit -m "autocommit by $NAME" || abort
+        $GIT commit -m "autocommit by $PROGRAM" || abort
         echo -en "$CLEAR"
     fi
 
@@ -407,12 +522,12 @@ _update() {
     echo -en "$GREY"
     if [ "${md[mode]}" == tag ]; then
         $GIT fetch origin tag "$ref" || abort
-        $GIT merge -m "automerge by $NAME" "$ref" || abort
+        $GIT merge -m "automerge by $PROGRAM" "$ref" || abort
         md[ref]="$ref"
     else 
         $GIT fetch origin "$ref" || abort
         md[sha]=$( $GIT log origin/"${md[ref]}" -1 --pretty=format:%H )
-        $GIT merge -m "automerge by $NAME" origin/"$ref" || abort
+        $GIT merge -m "automerge by $PROGRAM" origin/"$ref" || abort
     fi
     echo -en "$CLEAR"
 
@@ -427,10 +542,30 @@ _update() {
     echo -en "$CLEAR"
 }
 
-# Scan for executables and sharedlibs in a the root directory
-# of a package and create symlinks in the Smog directories
-# '$BIN' and '$LIB' respectively.
-# In recursive mode, scan the entire filetree of a package.
+_link_help() {
+    cat << EOF
+Create symlinks for executables and sharedlibs. This
+is done by first scanning the root directory of the
+package repository. Links are created in the two
+directories \$BIN and \$LIB.
+
+If more than one executable or sharedlib is detected,
+there is the option to edit the list.
+
+usage: smog link PKG [-r] [-R DIR]
+
+argument:
+    PKG         package name
+
+options:
+    -r          scan recursively in all subdirectories
+    -R DIR      use DIR instead the root directory of
+                repository (must be a subdirectory)
+
+metadata:
+    builddir    has the same effect as '-R DIR'
+EOF
+}
 _link() {
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
@@ -534,6 +669,16 @@ _link() {
     echo -en $CLEAR
 }
 
+_unlink_help() {
+    cat << EOF
+Unlink and remove symlinks of a package.
+
+usage: smog unlink PKG
+
+argument:
+    PKG         package name
+EOF
+}
 _unlink() {
     local -A md
     md_load "$1" || abort "package '$1' does not exist"
@@ -571,7 +716,7 @@ _unlink() {
 
 # reject to run as root user
 if [ "$EUID" -eq 0 ] || [ "$(id -u 2>/dev/null)" -eq 0 ]; then
-    abort "please don't run $NAME as root"
+    abort "please don't run $PROGRAM as root"
 fi
 
 # figure out home directory and import config
@@ -591,7 +736,7 @@ done
 
 # check for commands that need no further work 
 case $1 in
-    -h | --help | help ) _help && exit 0 ;;
+    -h | --help | help ) ${2:+_$2}_help && exit 0 || abort ;;
     -v | --version | version ) _version && exit 0 ;;
     * ) [ -z "$1" ] && _usage && abort 'error: missing command' ;;
 esac
@@ -610,7 +755,7 @@ declare opt arg buf
 
 while [ $# -gt 0 ]; do
 
-    # --- parse option --- #
+    # --- parse argument --- #
     opt=
     arg=
     [ -z "$buf" ] && buf="$1"
@@ -630,9 +775,10 @@ while [ $# -gt 0 ]; do
         shift
     fi
 
-    # --- handle option --- #
-    [ -z "$opt" ] && ARGS+=($arg) && continue
+    # --- handle argument --- #
+    [ -z "$opt" ] && ARGS+=("$arg") && continue
 
+    # --- handle option   --- #
     case $opt in
         t ) OPTS[mode]=tag ;;
         b ) OPTS[mode]=branch ;;
@@ -667,7 +813,7 @@ esac
 # lock metadata
 case $CMD in
     add | remove | update | link | unlink | set )
-        md_lock && trap 'md_unlock' EXIT || abort "metadata locked" ;;
+        md_lock && trap 'md_unlock' EXIT || abort "error: metadata locked" ;;
 esac
 
 _$CMD "${ARGS[@]}"
