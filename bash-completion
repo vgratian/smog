@@ -1,12 +1,15 @@
 #/usr/bin/env bash
 
-_smog_complete() {
+# shorthand for navigating to smog repos
+goto() {
+    cd $( smog path "$1" )
+}
 
-    local -a all_commands
-    local -a pkg_commands
+
+_smog_complete() {
     local cmd smog
-    all_commands=(add check list help version)
-    pkg_commands=(show path set sync update link unlink remove)
+    local all_commands=(add check list help version)
+    local pkg_commands=(show path set sync update link unlink remove)
     all_commands+=(${pkg_commands[@]})
 
     # -- complete command name -- #
@@ -37,4 +40,10 @@ _smog_complete() {
     fi
 }
 
+_goto_complete() {
+    local smog=$(command -v smog) || return
+    COMPREPLY+=( $( compgen -W "$( $smog list )" "${COMP_WORDS[1]}" ) )
+}
+
 complete -F _smog_complete smog
+complete -F _goto_complete goto
