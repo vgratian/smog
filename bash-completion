@@ -8,7 +8,7 @@ goto() {
 
 _smog_complete() {
     local cmd smog
-    local all_commands=(add check list help version)
+    local all_commands=(add check list help version search)
     local pkg_commands=(show path set sync update link unlink remove)
     all_commands+=(${pkg_commands[@]})
 

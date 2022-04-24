@@ -24,13 +24,11 @@ smog is best described by its main commands:
 
 * `smog add URL` - clone a git repository and creates package metadata
 * `smog show PKG` - show metadata of a package
-* `smog path PKG` - print path of the local repository 
 * `smog list` - list all packages
 * `smog sync` - list all packages that have remote updates
 * `smog update PKG` - update local repository with remote changes
-* `smog link PKG` - scan for binaries, executables and sharedlibs and create symlinks.
-
-smog is trying to be easily combined and piped with other bash commands.
+* `smog link PKG` - create symlinks for executable files in repository
+* `smog search KEY` - search for repositories (experimental)
 
 ## Installation
 

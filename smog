@@ -28,6 +28,7 @@ Commands:
     update PKG    Update local repository with remote changes
     link PKG      Create symlinks for executables and ELF libs
     unlink PKG    Remove symlinks
+    search QUERY  Search for repositories
 
     version       Print version and exit
     help          Print this message
@@ -711,6 +712,62 @@ _unlink() {
     md_links_remove "$1"
 }
 
+_search_help() {
+    cat << EOF
+Search for packages in remote repositories.
+
+Note: this is an experimental feature and currently
+only shows results from github.com (with max 10
+queries per minute). 
+
+usage: smog search QUERY
+
+argument:
+    QUERY       keyword to search for
+
+options:
+    -S          sort by, one of:
+                    stars
+                    forks
+                    help-wanted-issues
+                    default: best match
+    -L          language (e.g. go, python, c)
+    -N          number of results to show (max 100)
+
+reference:
+    https://docs.github.com/en/rest/search#search-repositories
+    https://docs.github.com/en/search-github/searching-on-github/searching-for-repositories
+EOF
+}
+
+_search() {
+    local url header
+    header="Accept: application/vnd.github.v3+json"
+    url="https://api.github.com/search/repositories?q=${1}"
+    [ -n "${OPTS[lang]}" ] && url+="+language:${OPTS[lang]}"
+    [ -n "${OPTS[sort]}" ] && url+="&sort=${OPTS[sort]}"
+    url+="&order=desc"
+    [ -n "${OPTS[num]}" ] && url+="&per_page=${OPTS[num]}"
+
+    local -i num=0
+	local line val
+
+	while read -r line; do
+		case $(echo "$line" | cut -sd: -f1 | tr -d '[:space:]"') in
+			'full_name' )
+				((num+=1))
+				val=$(echo "$line" | cut -sd: -f2- | sed -E 's/^\s*"(.+)",?$/\1/')
+				printf '\n%b%s%b\n' $BOLD "$val" $CLEAR ;;
+			'clone_url' | 'description' )
+				val=$(echo "$line" | cut -sd: -f2- | sed -E 's/^\s*"(.+)",$/\1/')
+				[ -n "$val" ] && printf '\t%s\n' "$val" ;;
+		esac
+	done <<< $( curl -# -H "$header" "$url" )
+
+	if [ $num -gt 0 ]; then
+		printf "\nshowed %d results from 'github.com'\n" $num
+	fi
+}
 
 # ---- main routine ---- #
 
@@ -789,6 +846,9 @@ while [ $# -gt 0 ]; do
         T ) [ -n "$arg" ] && OPTS[tag]="$arg" ||    abort "option '-$opt' requires argument" ;;
         B ) [ -n "$arg" ] && OPTS[branch]="$arg" || abort "option '-$opt' requires argument" ;;
         R ) [ -n "$arg" ] && OPTS[root]="$arg" ||   abort "option '-$opt' requires argument" ;;
+        S ) [ -n "$arg" ] && OPTS[sort]="$arg" ||   abort "option '-$opt' requires argument" ;;
+        L ) [ -n "$arg" ] && OPTS[lang]="$arg" ||   abort "option '-$opt' requires argument" ;;
+        N ) [ -n "$arg" ] && OPTS[num]="$arg"  ||   abort "option '-$opt' requires argument" ;;
         * ) abort "invalid option '-$opt'"
     esac
 done
@@ -801,6 +861,8 @@ case $CMD in
         [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <URL>" ;;
     remove | show | path | update | link | unlink )
         [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <PKG>" ;;
+    search )
+        [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <QUERY>" ;;
     sync )
         [ ! ${#ARGS[@]} -le 1 ] && abort "$CMD: has optional argument <PKG>" ;;
     list )
