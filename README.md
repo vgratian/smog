@@ -44,6 +44,8 @@ smog is best described by its main commands:
 ### Bootstrapping
 
 This is the recommended way of installation. The bootstrapper will install and configure smog as a package of itself.
+It will integrate smog to your bash environment and add the `goto` command for navigating to directories of smog
+packages.
 
 Just download the bootstrapper script and run with bash:
 
