@@ -310,6 +310,10 @@ options:
     -T TAG      use specifically tag TAG
     -B BRANCH   use specifically branch BRANCH
 
+    -r          clone submodules as well: this is
+                an experimental option, use at your
+                own risk!
+
 If no preference is given, smog will try first to
 clone a tag, and only if no tags are available,
 suggest to clone a branch.
@@ -393,7 +397,24 @@ _add() {
 	echo -en "$GREY"
 	$GIT clone --depth=1 -c advice.detachedHead=false -b "$ref" "$url" "$ROOT/$PKG/$path"
 	[ $? -ne 0 ] && rm -rf "$ROOT/$PKG/$path" && abort
+    echo -en "$CLEAR"
 
+    # Check if repo has submodules
+    if [ -e '.gitmodules' ]; then
+        if [ ! ${OPTS[recurse]+_} ]; then
+            echo "repository appears to have submodules"
+            ask 'clone submodules as well?' && OPTS[recurse]=
+        fi
+        if [ ${OPTS[recurse]+_} ]; then
+            md[submodules]=yes
+            echo
+            echo -e "cloning submodules..$GREY"
+            $GIT submodule update --depth=1 --init --recursive
+            echo -en "$CLEAR"
+        fi
+    fi
+
+    echo -en "$GREY"
 	$GIT checkout -b "${LOCALBRANCH}" 
 	[ $? -ne 0 ] && rm -rf "$ROOT/$PKG/$path" && abort
 	echo -en "$CLEAR"
@@ -476,6 +497,8 @@ _update() {
 
     echo -n "checking for updates.. "
 
+    set +e # temporary solution to bash nightmare
+
     if [ "${md[mode]}" == branch ]; then
         sync_branch "${md[url]}" "${md[ref]}" "${md[sha]}"
     elif [ "${md[mode]}" == tag ]; then
@@ -489,6 +512,7 @@ _update() {
         1 | 2 ) echo -e "${BOLD}${status}${CLEAR}" ;;
         * ) abort "$status" ;;
     esac
+    set -e
 
     # If we get here, updates are available.
     # For branch mode, we just need to update local branch
@@ -531,6 +555,15 @@ _update() {
         $GIT merge -m "automerge by $PROGRAM" origin/"$ref" || abort
     fi
     echo -en "$CLEAR"
+
+    # Update submodules
+    # TODO: experimental, needs testing
+    # TODO: warn that we don't take care of local changes in submodules
+    if [ ${md[submodules]+_} ]; then
+        echo -e "updating submodules..$GREY"
+        $GIT submodule update --init --recursive
+        echo -en "$CLEAR"
+    fi
 
     md_dump "$1"
 
