@@ -22,8 +22,8 @@ smog is [configured](#config) by a few bash variables and it manages each reposi
 
 smog is best described by its main commands:
 
-* `smog add URL`    - clone a git repository and creates package metadata
-* `smog show PKG    - show metadata of a package
+* `smog add URL`    - create package from a git repository
+* `smog show PKG`   - show metadata of a package
 * `smog list`       - list all packages
 * `smog sync`       - list all packages that have remote updates
 * `smog update PKG` - update local repository with remote changes
@@ -110,12 +110,15 @@ Here is a typical example of using smog. I add dwm, my favorite window-manager:
 smog add git://git.suckless.org/dwm
 ```
 
-Very often I will edit the source-code and then build the package. This is the part that I do myself:
+Typically I modify the source-code, then build the package. This is the part that I do myself:
 
 ```bash
-cd `smog path dwm`
-vim dwm.c  # modified the source code
-make dwm   # build the package myself
+# modify the source code
+goto dwm
+vim dwm.c
+# tell smog how to build dwm
+smog set dwm buildcmd='make all'
+smog build
 ```
 
 Finally, I want to add the binary `dwm` to my `PATH`:
@@ -124,6 +127,11 @@ smog link dwm
 ```
 
 (If smog detects more binaries in the repostory, it will ask if you want all of them to be linked).
+
+Later on, I can upgrade dwm with:
+```bash
+test -n "$(smog sync dwm)" && smog upgrade dwm -f
+```
 
 ### Query packages
 

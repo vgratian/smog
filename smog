@@ -802,7 +802,7 @@ _build() {
 
 _upgrade_help() {
     cat << EOF
-Shorthand command equa to 'smog update PKG &&
+Shorthand command equal to 'smog update PKG &&
 smog build PKG'.
 
 usage: smog upgrade PKG [-f] [-T TAG] [-R DIR]
