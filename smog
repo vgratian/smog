@@ -28,7 +28,7 @@ Commands:
     update PKG    Update local repository with remote changes
     link PKG      Create symlinks for executables and ELF libs
     unlink PKG    Remove symlinks
-    search QUERY  Search for repositories
+    search KEY    Search for repositories
 
     version       Print version and exit
     help          Print this message
@@ -150,7 +150,7 @@ EOF
 _path() {
     md_exists "$1" || abort "package '$1' does not exist"
     echo -n "$ROOT/$PKG/"
-    grep '^path: ' "$ROOT/$MDD/$1" | cut -d' ' -f2-
+    md_get "$1" 'path'
 }
 
 _set_help() {
@@ -339,7 +339,7 @@ _add() {
     md[url]=$url
 
     # Warn if URL used for another package
-    local used=$(grep -rlE "^url: ${url}$" "$ROOT/$MDD/")
+    local used=$(grep -l "^url: ${url}$" "$ROOT/$MDD/*")
     if [ -n "$used" ]; then
         echo "URL already used by package '`basename $used`'"
         # ask 'continue anyway?' || exit
@@ -745,6 +745,74 @@ _unlink() {
     md_links_remove "$1"
 }
 
+_build_help() {
+    cat << EOF
+Runs the 'buildcmd' as defined in metadata of package.
+Set this manually with 'smog set PKG buildcmd=dostuff'.
+
+Command is executed in the root directory of package
+unless the metadata field 'builddir' or the option '-R'
+is provided.
+
+Experimental feature, use at your own risk.
+
+usage: smog build PKG [-R DIR]
+
+argument:
+    PKG         package name
+
+options:
+    -R [DIR]    run command in subdirectory DIR
+
+metadata:
+    buildcmd    string representing simple bash
+                command or execution of bash script
+
+                examples:
+
+                'make all'
+                'gcc example.c -o example'
+                './build.sh'
+EOF
+}
+_build() {
+    md_exists "$1" || abort "package '$1' does not exist"
+    local buildcmd=$(md_get $1 'buildcmd')
+
+    if [ -z "$buildcmd" ]; then
+        abort "'buildcmd' not defined in metadata"
+    fi
+
+    local pkgpath=$(md_get "$1" 'path')
+    local subdir=
+
+    if [ ${OPTS[root]+_} ]; then
+        subdir="${OPTS[root]}"
+    else
+        subdir=$(md_get $1 'builddir')
+    fi
+
+    local fullpath="$PKG/$pkgpath/$subdir"
+
+    cd "$ROOT/$fullpath"
+    echo "changed directory '$fullpath'"
+
+    ask "execute '$buildcmd'?" && $buildcmd
+}
+
+_upgrade_help() {
+    cat << EOF
+Shorthand command equa to 'smog update PKG &&
+smog build PKG'.
+
+usage: smog upgrade PKG [-f] [-T TAG] [-R DIR]
+EOF
+}
+
+_upgrade() {
+    _update "$1" && _build "$1"
+}
+
 _search_help() {
     cat << EOF
 Search for packages in remote repositories.
@@ -892,10 +960,10 @@ unset opt arg buf
 case $CMD in
     add | check )
         [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <URL>" ;;
-    remove | show | path | update | link | unlink )
+    remove | show | path | update | link | unlink | build | upgrade )
         [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <PKG>" ;;
     search )
-        [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <QUERY>" ;;
+        [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <KEY>" ;;
     sync )
         [ ! ${#ARGS[@]} -le 1 ] && abort "$CMD: has optional argument <PKG>" ;;
     list )

@@ -22,13 +22,18 @@ smog is [configured](#config) by a few bash variables and it manages each reposi
 
 smog is best described by its main commands:
 
-* `smog add URL` - clone a git repository and creates package metadata
-* `smog show PKG` - show metadata of a package
-* `smog list` - list all packages
-* `smog sync` - list all packages that have remote updates
+* `smog add URL`    - clone a git repository and creates package metadata
+* `smog show PKG    - show metadata of a package
+* `smog list`       - list all packages
+* `smog sync`       - list all packages that have remote updates
 * `smog update PKG` - update local repository with remote changes
-* `smog link PKG` - create symlinks for executable files in repository
-* `smog search KEY` - search for repositories (experimental)
+* `smog link PKG`   - create symlinks for executable files in repository
+
+unstable and experimental commands:
+* `smog add -r URL`     - add git repository with submodules
+* `smog build PKG`      - build package (requires manually defined `buildcmd`)
+* `smog upgrade PKG`    - update and upgrade package
+* `smog search KEYWORD` - search for repositories (currently only on github.com)
 
 ## Installation
 
@@ -38,8 +43,11 @@ smog is best described by its main commands:
 - `bash` (>= `4.3`) and a few common bash programs:
     * `test`, `cat`, `cut`, `ln`, `readlink`, `tr`, etc.
     * `grep`, `sed`, `file`, `xargs` (for asynchronous syncing)
-- optionally `vim` or any other text editor
-- the bootstrapper additionally requires `wget`
+
+optional:
+- `vim` or any other text editor
+- `wget` for bootstrapping
+- `curl` for searching
 
 ### Bootstrapping
 

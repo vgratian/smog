@@ -44,6 +44,11 @@ md_load() {
     done < "$ROOT/$MDD/$1"
 }
 
+# Echo value of a metadata field
+md_get() {
+    grep "^${2}: " "$ROOT/$MDD/$1" | cut -d' ' -f2-
+}
+
 # Save key-value pairs of the AA 'md' into package
 # metadata. Overwrites file if it exists.
 md_dump() {
