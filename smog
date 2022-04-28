@@ -339,7 +339,7 @@ _add() {
     md[url]=$url
 
     # Warn if URL used for another package
-    local used=$(grep -l "^url: ${url}$" "$ROOT/$MDD/*")
+    local used=$(grep -lr "^url: ${url}$" "$ROOT/$MDD" --exclude=*{.bin,.lib})
     if [ -n "$used" ]; then
         echo "URL already used by package '`basename $used`'"
         # ask 'continue anyway?' || exit
