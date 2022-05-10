@@ -3,7 +3,7 @@
 set -e 
 
 readonly PROGRAM=$(basename $0)
-readonly VERSION='0.0.0'
+readonly VERSION='0.0.1'
 readonly HOMEURL='https://github.com/vgratian/smog'
 
 _version() {

@@ -8,7 +8,7 @@ set -e
 BOOTSTRAP=bootstrap
 
 # target smog version
-REF=0.0.0
+REF=0.0.1
 MODE=tag
 # it's also possible to bootstrap in branch mode, but highly discouraged
 # you could do that by uncommenting these two lines

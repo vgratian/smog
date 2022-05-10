@@ -80,7 +80,7 @@ bash bootstrap undo
 Clone the latest tag in a location of your choice and copy the default config file to `config`:
 
 ```bash
-git clone -b 0.0.0 https://github.com/vgratian/smog
+git clone -b 0.0.1 https://github.com/vgratian/smog
 cd smog
 cp config-def config
 ```
