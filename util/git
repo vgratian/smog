@@ -67,8 +67,11 @@ check_refs() {
         # the '-B' flag was provided with a branch name.
         if [ ! ${OPTS[branch]+_} ]; then
             ref=
-            [ ${refs[main]} ] && ref=main
-            [ ${refs[master]} ] && ref=master
+            if [ ${refs[main]} ]; then
+                ref=main
+            elif [ ${refs[master]} ]; then
+                ref=master
+            fi
         fi
     fi
 }
