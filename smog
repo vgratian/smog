@@ -20,7 +20,7 @@ _help() {
 
 Commands:
     list          List all local packages
-    add URL       Create new package from a git URL
+    get URL       Create new package from a git URL
     remove PKG    Remove package
     show PKG      Show package metadata
     path PKG      Show path of local repository
@@ -269,7 +269,7 @@ in the future.
 
 usage: smog check URL [-ftb] [-T TAG] [-B BRANCH] 
 
-See 'smog add' for arguments and options.
+See 'smog get' for arguments and options.
 EOF
 }
 
@@ -293,12 +293,12 @@ _check() {
     for r in "${refsarr[@]}"; do echo "  * $r"; done
 }
 
-_add_help() {
+_get_help() {
     cat << EOF
 Create a smog package for the given git URL,
 i.e. clone repository and create metadata file.
 
-usage: smog add URL [-ftb] [-T TAG] [-B BRANCH] 
+usage: smog get URL [-ftb] [-T TAG] [-B BRANCH] 
 
 argument:
     URL     a valid git URL
@@ -319,7 +319,7 @@ clone a tag, and only if no tags are available,
 suggest to clone a branch.
 EOF
 }
-_add() {
+_get() {
 
     local pkg path url="$1"
 
@@ -421,6 +421,15 @@ _add() {
 
     md_dump "$pkg"
     echo -e "${BOLD}package '$pkg' created${CLEAR}"
+}
+
+_add_help() {
+    cat << EOF
+See: 'smog help get'
+EOF
+}
+_add() {
+    _get "$@"
 }
 
 _sync_help() {
@@ -958,7 +967,7 @@ unset opt arg buf
 
 # check that command has required number of arguments
 case $CMD in
-    add | check )
+    get | add | check )
         [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <URL>" ;;
     remove | show | path | update | link | unlink | build | upgrade )
         [ ${#ARGS[@]} -ne 1 ] && abort "$CMD: requires 1 argument <PKG>" ;;
@@ -975,7 +984,7 @@ esac
 
 # lock metadata
 case $CMD in
-    add | remove | update | link | unlink | set )
+    get | add | remove | update | link | unlink | set )
         md_lock && trap 'md_unlock' EXIT || abort "error: metadata locked" ;;
 esac
 

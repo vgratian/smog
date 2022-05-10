@@ -22,7 +22,7 @@ smog is [configured](#config) by a few bash variables and it manages each reposi
 
 smog is best described by its main commands:
 
-* `smog add URL`    - create package from a git repository
+* `smog get URL`    - create package from a git repository
 * `smog show PKG`   - show metadata of a package
 * `smog list`       - list all packages
 * `smog sync`       - list all packages that have remote updates
@@ -30,7 +30,7 @@ smog is best described by its main commands:
 * `smog link PKG`   - create symlinks for executable files in repository
 
 unstable and experimental commands:
-* `smog add -r URL`     - add git repository with submodules
+* `smog get -r URL`     - add git repository with submodules
 * `smog build PKG`      - build package (requires manually defined `buildcmd`)
 * `smog upgrade PKG`    - update and upgrade package
 * `smog search KEYWORD` - search for repositories (currently only on github.com)
@@ -107,7 +107,7 @@ For a comprehensive list of commands and options, simply run `smog help`.
 Here is a typical example of using smog. I add dwm, my favorite window-manager:
 
 ```bash
-smog add git://git.suckless.org/dwm
+smog get git://git.suckless.org/dwm
 ```
 
 Typically I modify the source-code, then build the package. This is the part that I do myself:
@@ -158,7 +158,7 @@ smog is configured by a set of bash variables that are sourced from the file `co
 | `ROOT`             | absolute path | The parent of the directories that smog operates on (described below).<br />this can't be empty, should be writable and is normally `$HOME`.<br />allows you to chroot or sandbox smog.|
 | `BIN` (_optional_) | path in $ROOT | directory where symlinks are created to binaries and exectubles (when you run `smog link PKG`). |
 | `LIB` (_optional_) | path in $ROOT | directory where symlinks are created to shared libraries (when you run `smog link PKG`). |
-| `PKG`              | path in $ROOT | directory where repositories are cloned (when you run `smog add URL`). |
+| `PKG`              | path in $ROOT | directory where repositories are cloned (when you run `smog get URL`). |
 | `SMOG`             | path in $ROOT | smog home directory - containing the source-code and `config`.<br />if you bootstrapped smog, this directory is `$PKG/github.com/vgratian/smog`. |
 | `MDD`              | path in $ROOT | location of metadata files |
 | `LOCALBRANCH`     | string         | name of the local working branch - smog will create this branch after cloning a repostory, this helps to isolate your local changes from the upstream source code and update the repository smoothly.<br />note: avoid names that might conflict remote branch names, such as `master`, `main`. |
@@ -176,17 +176,17 @@ Since tags tend to be more stable, this is the preferred mode when new package i
 
 * Add package `dino` in branch mode:
 ```bash
-smog add https://github.com/dino/dino -b
+smog get https://github.com/dino/dino -b
 ```
 
 * Add `dino` in branch mode and use branch `feature/handy`:
 ```bash
-smog add https://github.com/dino/dino -B feature/handy
+smog get https://github.com/dino/dino -B feature/handy
 ```
 
 * Add package `dwm` in tag mode and use tag `6.0`:
 ```bash
-smog add git://git.suckless.org/dwm -T 6.0
+smog get git://git.suckless.org/dwm -T 6.0
 ```
 
 * Update `dwm` to tag `6.2`:
